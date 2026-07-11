@@ -9,6 +9,7 @@ Run the notebooks in this order:
 2. `notebooks/1_handle_outliers.ipynb`
 3. `notebooks/2_feature_binning.ipynb`
 4. `notebooks/handle_encoding.ipynb`
-5. `notebooks/2_handle_imbalance_smote.ipynb`
+5. `notebooks/handle_scaling.ipynb`
+6. `notebooks/2_handle_imbalance_smote.ipynb`
 
-The feature-binning step should happen before encoding and SMOTE so the downstream notebooks receive the already-binned dataset and can treat those fields as categorical features.
+The feature-binning step should happen before encoding, scaling, and SMOTENC so the downstream notebooks receive the already-binned dataset and can treat those fields as categorical features.
