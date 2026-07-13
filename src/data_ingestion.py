@@ -1,10 +1,10 @@
 import os
 import pandas as pd
-import logging
 from abc import ABC, abstractmethod
+from utils.logger import get_logger
 
-# Retrieve module-level logger without configuring it globally
-logger = logging.getLogger(__name__)
+# Retrieve logger configured with file and console handlers
+logger = get_logger(__name__)
 
 
 class DataIngestor(ABC):
