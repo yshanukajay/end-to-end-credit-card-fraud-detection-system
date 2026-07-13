@@ -1,11 +1,120 @@
-numpy # numerical python
-pandas # data manipulation
-scikit-learn # models & data preprocessing
-imbalanced-learn # SMOTE & resampling techniques
-openai # EDA Process 
-groq # EDA Process
-seaborn # Visualizations
-dotenv
-matplotlib
-ipykernel
-xgboost
+# ==============================================================================
+# Python 3.11 Compatible Requirements for Credit Card Fraud Detection System
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Topic 1: Core Machine Learning and Data Science
+# ------------------------------------------------------------------------------
+# NumPy: Version 1.23.2+ is required for Python 3.11 support (adds official wheels).
+numpy>=1.23.2
+# Pandas: Version 1.5.0+ introduces 3.11 support, 1.5.3+ or 2.0.0+ is highly recommended for stability.
+pandas>=1.5.3
+# SciPy: Version 1.9.2+ is required for Python 3.11 wheels (prevents source compilation failure).
+scipy>=1.9.2
+# Scikit-Learn: Version 1.2.0+ is required for prebuilt Python 3.11 wheels.
+scikit-learn>=1.2.0
+# Imbalanced-Learn: Version 0.10.1+ is required for Python 3.11 (used for SMOTE/resampling in notebooks).
+imbalanced-learn>=0.10.1
+
+# ------------------------------------------------------------------------------
+# Topic 2: Machine Learning Pipelines
+# ------------------------------------------------------------------------------
+# ZenML: Version 0.50.0+ has full Python 3.11 compatibility.
+# zenml>=0.50.0
+# zenml[server]>=0.50.0
+
+# ------------------------------------------------------------------------------
+# Topic 3: Model Libraries
+# ------------------------------------------------------------------------------
+# XGBoost: Version 1.7.0+ (specifically 1.7.3+) is required for precompiled Python 3.11 wheels.
+xgboost>=1.7.3
+# LightGBM: Version 3.3.5+ adds official Python 3.11 support.
+lightgbm>=3.3.5
+
+# ------------------------------------------------------------------------------
+# Topic 4: Data Visualization
+# ------------------------------------------------------------------------------
+# Matplotlib: Version 3.6.2+ introduces Python 3.11 prebuilt wheels.
+matplotlib>=3.6.2
+# Seaborn: Version 0.12.2+ is highly stable under Python 3.11.
+seaborn>=0.12.2
+# Plotly: Version 5.11.0+ is stable with Python 3.11.
+plotly>=5.11.0
+
+# ------------------------------------------------------------------------------
+# Topic 5: Configuration and Utilities
+# ------------------------------------------------------------------------------
+# PyYAML: CRITICAL - Version 6.0.1+ is required because 6.0 fails to install/compile on Python 3.11.
+pyyaml>=6.0.1
+# Python-dotenv: Version 1.0.0+ is fully compatible with Python 3.11.
+python-dotenv>=1.0.0
+
+# ------------------------------------------------------------------------------
+# Topic 6: Data Processing (Excel & Spreadsheet I/O)
+# ------------------------------------------------------------------------------
+# Openpyxl: Version 3.1.0+ is stable with Python 3.11.
+openpyxl>=3.1.0
+# Xlrd: Version 2.0.1+ is stable under Python 3.11.
+xlrd>=2.0.1
+
+# ------------------------------------------------------------------------------
+# Topic 7: API and Web Services (for deployment)
+# ------------------------------------------------------------------------------
+# FastAPI: Version 0.95.0+ or higher is compatible, 0.100.0+ works best with Pydantic v2.
+fastapi>=0.100.0
+# Uvicorn: Version 0.22.0+ is highly stable for Python 3.11.
+uvicorn>=0.22.0
+# Pydantic: Version 2.0.0 to <2.11.2 is fully compatible.
+pydantic>=2.0.0,<2.11.2
+
+# ------------------------------------------------------------------------------
+# Topic 8: Experiment Monitoring and Logging
+# ------------------------------------------------------------------------------
+# MLflow: Version 2.3.0+ is highly recommended to avoid dependency conflicts on Python 3.11.
+# (MLflow will be added back later)
+mlflow>=2.3.0
+# WandB: Version 0.15.0+ is fully compatible with Python 3.11.
+wandb>=0.15.0
+
+# ------------------------------------------------------------------------------
+# Topic 9: Automated Testing
+# ------------------------------------------------------------------------------
+# Pytest: Version 7.3.0+ has full Python 3.11 support.
+pytest>=7.3.0
+# Pytest-cov: Version 4.0.0+ is compatible.
+pytest-cov>=4.0.0
+
+# ------------------------------------------------------------------------------
+# Topic 10: Development Tools
+# ------------------------------------------------------------------------------
+# Jupyter & IPykernel: Versions with fixes for Python 3.11's async loops.
+jupyter>=1.0.0
+ipykernel>=6.20.0
+# Black: Version 23.1.0+ is required to parse Python 3.11 syntax changes correctly.
+black>=23.1.0
+# Flake8: Version 6.0.0+ is compatible with Python 3.11 standard AST.
+flake8>=6.0.0
+
+# ------------------------------------------------------------------------------
+# Topic 11: Advanced Imputation & LLM APIs (Optional)
+# ------------------------------------------------------------------------------
+# Groq: Fully compatible client for Groq API.
+groq>=0.11.0
+# OpenAI: Fully compatible client for OpenAI API (if needed).
+# openai>=1.0.0
+
+# ------------------------------------------------------------------------------
+# Topic 12: Additional Model Libraries (Optional)
+# ------------------------------------------------------------------------------
+# CatBoost: Version 1.1.1+ is required for Python 3.11 wheels.
+# catboost>=1.1.1
+# Optuna: Version 3.1.0+ has official support for Python 3.11.
+# optuna>=3.1.0
+
+# ------------------------------------------------------------------------------
+# Topic 13: System Level Dependencies (Reference for installation)
+# ------------------------------------------------------------------------------
+# Note: These may need to be installed via your system package manager (e.g., apt, brew, choco).
+# - libgomp1 (OpenMP support required by XGBoost/LightGBM)
+# - libblas-dev (Required for BLAS implementation)
+# - liblapack-dev (Required for LAPACK implementation)
