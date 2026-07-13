@@ -8,3 +8,4 @@ seaborn # Visualizations
 dotenv
 matplotlib
 ipykernel
+xgboost
