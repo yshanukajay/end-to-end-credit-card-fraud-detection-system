@@ -345,10 +345,10 @@ def data_pipeline(
     # Persist processed splits to disk
     # -----------------------------------------------------------------------
     logger.info("\nSaving processed splits to disk in NPZ format...")
-    np.savez(x_train_path, X_train=X_train.values)
-    np.savez(x_test_path, X_test=X_test.values)
-    np.savez(y_train_path, y_train=y_train.values.ravel())
-    np.savez(y_test_path, y_test=y_test.values.ravel())
+    np.savez(x_train_path, X_train=X_train.values.astype(float))
+    np.savez(x_test_path, X_test=X_test.values.astype(float))
+    np.savez(y_train_path, y_train=y_train.values.astype(int).ravel())
+    np.savez(y_test_path, y_test=y_test.values.astype(int).ravel())
     
     with open(features_json_path, 'w') as f:
         json.dump(list(X_train.columns), f)
@@ -375,8 +375,8 @@ def data_pipeline(
 
 if __name__ == "__main__":
     try:
-        logger.info("Launching data pipeline...")
-        result = data_pipeline()
+        force = '--force' in sys.argv or '-f' in sys.argv
+        result = data_pipeline(force_rebuild=force)
 
         print("\n" + "=" * 60)
         print("[DATA PIPELINE EXECUTION SUMMARY]")
