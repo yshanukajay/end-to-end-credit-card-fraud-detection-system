@@ -21,6 +21,15 @@ sys.path.insert(0, PROJECT_ROOT)
 from utils.logger import get_logger
 logger = get_logger(__name__)
 
+# Try to import mlflow to track experiments
+try:
+    import mlflow
+    from utils.mlflow_utils import MLflowTracker
+    MLFLOW_AVAILABLE = True
+except ImportError:
+    MLFLOW_AVAILABLE = False
+    logger.warning("⚠ mlflow package not found. MLflow tracking will be skipped.")
+
 # ---------------------------------------------------------------------------
 # src imports — wired to actual module filenames on disk
 # ---------------------------------------------------------------------------
@@ -240,6 +249,41 @@ def data_pipeline(
         logger.info(f"  y_test  : {y_test.shape}   (fraud rate: {y_test.mean():.3%})")
         logger.info(f"{'='*80}\n")
 
+        # Log data pipeline metrics to MLflow
+        if MLFLOW_AVAILABLE:
+            try:
+                tracker = None
+                active_run = mlflow.active_run()
+                if not active_run:
+                    tracker = MLflowTracker()
+                    tracker.start_run(run_name="data_pipeline")
+                
+                dataset_info = {
+                    'total_rows': X_train.shape[0] + X_test.shape[0],
+                    'train_rows': X_train.shape[0],
+                    'test_rows': X_test.shape[0],
+                    'num_features': X_train.shape[1],
+                    'missing_values': 0,
+                    'outliers_removed': 0,
+                    'test_size': float(test_size),
+                    'random_state': int(splitting_cfg.get('random_state', 42)),
+                    'missing_strategy': str(config.get('missing_values', {}).get('strategy', 'fill')),
+                    'outlier_method': str(config.get('outlier_detection', {}).get('handling_method', 'cap')),
+                    'encoding_applied': True,
+                    'scaling_applied': True,
+                    'feature_names': list(X_train.columns)
+                }
+                
+                if tracker:
+                    tracker.log_data_pipeline_metrics(dataset_info)
+                    tracker.end_run()
+                else:
+                    temp_tracker = MLflowTracker()
+                    temp_tracker.log_data_pipeline_metrics(dataset_info)
+                logger.info("✓ Data pipeline metrics successfully logged to MLflow.")
+            except Exception as e:
+                logger.warning(f"Failed to log data pipeline metrics to MLflow: {e}")
+
         return {
             'X_train': X_train.values,
             'X_test':  X_test.values,
@@ -360,6 +404,41 @@ def data_pipeline(
     logger.info(f"\n{'='*80}")
     logger.info("✓ DATA PIPELINE COMPLETE")
     logger.info(f"{'='*80}\n")
+
+    # Log data pipeline metrics to MLflow
+    if MLFLOW_AVAILABLE:
+        try:
+            tracker = None
+            active_run = mlflow.active_run()
+            if not active_run:
+                tracker = MLflowTracker()
+                tracker.start_run(run_name="data_pipeline")
+            
+            dataset_info = {
+                'total_rows': X_train.shape[0] + X_test.shape[0],
+                'train_rows': X_train.shape[0],
+                'test_rows': X_test.shape[0],
+                'num_features': X_train.shape[1],
+                'missing_values': 0,
+                'outliers_removed': 0,
+                'test_size': float(test_size),
+                'random_state': int(splitting_cfg.get('random_state', 42)),
+                'missing_strategy': str(config.get('missing_values', {}).get('strategy', 'fill')),
+                'outlier_method': str(config.get('outlier_detection', {}).get('handling_method', 'cap')),
+                'encoding_applied': True,
+                'scaling_applied': True,
+                'feature_names': list(X_train.columns)
+            }
+            
+            if tracker:
+                tracker.log_data_pipeline_metrics(dataset_info)
+                tracker.end_run()
+            else:
+                temp_tracker = MLflowTracker()
+                temp_tracker.log_data_pipeline_metrics(dataset_info)
+            logger.info("✓ Data pipeline metrics successfully logged to MLflow.")
+        except Exception as e:
+            logger.warning(f"Failed to log data pipeline metrics to MLflow: {e}")
 
     return {
         'X_train': X_train.values,

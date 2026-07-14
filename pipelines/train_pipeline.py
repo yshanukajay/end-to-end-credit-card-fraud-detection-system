@@ -25,6 +25,7 @@ logger = get_logger(__name__)
 # Try to import mlflow to track experiments
 try:
     import mlflow
+    from utils.mlflow_utils import MLflowTracker
     MLFLOW_AVAILABLE = True
 except ImportError:
     MLFLOW_AVAILABLE = False
@@ -189,18 +190,12 @@ def train_pipeline(force_rebuild_data: bool = False) -> Dict[str, Any]:
     logger.info(f"  • y_test:  {y_test.shape} (Fraud: {int(y_test.sum())}, Legitimate: {len(y_test) - int(y_test.sum())})")
     
     # 2. Setup MLflow Tracking
-    active_run = None
+    tracker = None
     if MLFLOW_AVAILABLE:
         try:
-            tracking_uri = mlflow_cfg.get('tracking_uri', 'sqlite:///mlflow.db')
-            experiment_name = mlflow_cfg.get('experiment_name', 'Credit Card Fraud Detection')
-            
-            mlflow.set_tracking_uri(tracking_uri)
-            mlflow.set_experiment(experiment_name)
-            
+            tracker = MLflowTracker()
             run_name = f"{model_cfg.get('model_type', 'random_forest')}_{model_cfg.get('training_strategy', 'cv')}"
-            active_run = mlflow.start_run(run_name=run_name)
-            logger.info(f"✓ Started MLflow run: '{run_name}' in experiment '{experiment_name}'")
+            tracker.start_run(run_name=run_name)
             
             # Log dataset stats
             mlflow.log_params({
@@ -211,6 +206,7 @@ def train_pipeline(force_rebuild_data: bool = False) -> Dict[str, Any]:
             })
         except Exception as e:
             logger.warning(f"Failed to initialize MLflow tracking: {e}")
+            tracker = None
             
     # 3. Build Model
     model_type = model_cfg.get('model_type', 'random_forest')
@@ -253,40 +249,42 @@ def train_pipeline(force_rebuild_data: bool = False) -> Dict[str, Any]:
     )
     
     # 7. Log to MLflow
-    if MLFLOW_AVAILABLE and active_run:
+    if MLFLOW_AVAILABLE and tracker:
         try:
-            # Log model params
-            mlflow.log_params({
-                'model_type': model_type,
-                'training_strategy': type(trainer.strategy).__name__,
-                **model_params
-            })
+            # Log model params & training metrics
+            filtered_train_metrics = {
+                f"train_{k}": v for k, v in training_metrics.items()
+                if isinstance(v, (int, float))
+            }
+            filtered_train_metrics['training_time_s'] = training_time
             
-            # Log training metrics
-            mlflow.log_metric('training_time_s', training_time)
-            for k, v in training_metrics.items():
-                if isinstance(v, (int, float)):
-                    mlflow.log_metric(f'train_{k}', v)
-                    
-            # Log evaluation metrics
-            for k, v in evaluation_results.items():
-                if isinstance(v, (int, float)):
-                    mlflow.log_metric(f'test_{k}', v)
-                    
-            # Log artifacts
+            tracker.log_training_metrics(
+                model=trained_model,
+                training_metrics=filtered_train_metrics,
+                model_params={
+                    'model_type': model_type,
+                    'training_strategy': type(trainer.strategy).__name__,
+                    **model_params
+                }
+            )
+            
+            # Log evaluation metrics and confusion matrix plot
+            filtered_eval_metrics = {
+                f"test_{k}": v for k, v in evaluation_results.items()
+                if isinstance(v, (int, float))
+            }
+            
+            tracker.log_evaluation_metrics(
+                evaluation_metrics=filtered_eval_metrics,
+                confusion_matrix_path=os.path.join(plots_dir, f'confusion_matrix_{model_type}.png')
+            )
+            
+            # Log additional evaluation artifacts
             mlflow.log_artifact(dest_model_path, "model")
             mlflow.log_artifact(report_path, "evaluation")
             
-            # Auto-log model if possible
-            try:
-                if 'xgb' in model_type.lower():
-                    mlflow.xgboost.log_model(trained_model, "xgb_model")
-                else:
-                    mlflow.sklearn.log_model(trained_model, "sklearn_model")
-            except Exception as e:
-                logger.warning(f"Could not auto-log model artifact: {e}")
-                
-            mlflow.end_run()
+            # End run
+            tracker.end_run()
             logger.info("✓ MLflow tracking metrics and artifacts successfully uploaded.")
         except Exception as e:
             logger.error(f"Error logging to MLflow: {e}")

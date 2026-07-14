@@ -1,0 +1,10 @@
+{
+    "amount": 450.75,
+    "transaction_hour": 14,
+    "merchant_category": "Travel",
+    "foreign_transaction": 1,
+    "location_mismatch": 1,
+    "device_trust_score": 12.5,
+    "velocity_last_24h": 5,
+    "cardholder_age": 29
+}
