@@ -23,13 +23,13 @@ from utils.logger import get_logger
 logger = get_logger(__name__)
 
 
-def load_config(config_path: Optional[str] = None) -> dict:
-    """Load configuration from config.yaml."""
-    if config_path is None:
-        config_path = os.path.join(PROJECT_ROOT, 'config.yaml')
-    with open(config_path, 'r') as f:
-        return yaml.safe_load(f)
-
+from utils.config import (
+    get_config,
+    get_model_config,
+    get_binning_config,
+    get_encoding_config,
+    get_scaling_config,
+)
 
 class ModelInference:
     """
@@ -45,11 +45,11 @@ class ModelInference:
         logger.info(f"{'='*60}")
         
         # Load config
-        self.config = load_config()
+        self.config = get_config()
         
         # Determine model path
         if model_path is None:
-            model_cfg = self.config.get('model', {})
+            model_cfg = get_model_config()
             model_path = model_cfg.get('model_path', 'artifacts/model/random_forest_cv_model.pkl')
             
         if not os.path.isabs(model_path):
@@ -66,9 +66,9 @@ class ModelInference:
             self.load_model()
             
             # Load config sections
-            self.binning_config = self.config.get('feature_binning', {})
-            self.encoding_config = self.config.get('feature_encoding', {})
-            self.scaling_config = self.config.get('feature_scaling', {})
+            self.binning_config = get_binning_config()
+            self.encoding_config = get_encoding_config()
+            self.scaling_config = get_scaling_config()
             
             # Initialize and load standard scaler
             self.scaler = StandardScalingStrategy()

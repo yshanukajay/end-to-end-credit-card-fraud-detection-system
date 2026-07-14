@@ -16,29 +16,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = logging.getLogger(__name__)
 
 
-def get_mlflow_config() -> dict:
-    """Load MLflow configuration from config.yaml."""
-    config_path = os.path.join(PROJECT_ROOT, 'config.yaml')
-    try:
-        with open(config_path, 'r') as f:
-            full_config = yaml.safe_load(f)
-            return full_config.get('mlflow', {})
-    except Exception as e:
-        logger.warning(f"Could not load config.yaml from {config_path}: {e}. Using defaults.")
-        return {
-            'tracking_uri': 'sqlite:///mlflow.db',
-            'experiment_name': 'Credit Card Fraud Detection',
-            'model_registry_name': 'credit_card_fraud_prediction',
-            'artifact_path': 'model',
-            'run_name_prefix': 'fraud_run',
-            'tags': {
-                'project': 'credit_card_fraud_detection',
-                'team': 'ml_engineering',
-                'environment': 'development'
-            },
-            'autolog': True
-        }
-
+from utils.config import get_mlflow_config
 
 class MLflowTracker:
     """MLflow tracking utilities for experiment management and model versioning"""
@@ -50,6 +28,12 @@ class MLflowTracker:
     def setup_mlflow(self):
         """Initialize MLflow tracking with configuration"""
         tracking_uri = self.config.get('tracking_uri', 'sqlite:///mlflow.db')
+        if tracking_uri.startswith('sqlite:///'):
+            db_path = tracking_uri.split('sqlite:///')[1]
+            if not os.path.isabs(db_path):
+                db_path = os.path.abspath(os.path.join(PROJECT_ROOT, db_path))
+            tracking_uri = f"sqlite:///{db_path}"
+            
         mlflow.set_tracking_uri(tracking_uri)
         
         experiment_name = self.config.get('experiment_name', 'Credit Card Fraud Detection')
@@ -57,8 +41,10 @@ class MLflowTracker:
         try:
             experiment = mlflow.get_experiment_by_name(experiment_name)
             if experiment is None:
-                experiment_id = mlflow.create_experiment(experiment_name)
-                logger.info(f"Created new MLflow experiment: {experiment_name} (ID: {experiment_id})")
+                abs_mlruns_path = os.path.abspath(os.path.join(PROJECT_ROOT, 'mlruns'))
+                artifact_location = Path(abs_mlruns_path).as_uri()
+                experiment_id = mlflow.create_experiment(experiment_name, artifact_location=artifact_location)
+                logger.info(f"Created new MLflow experiment: {experiment_name} (ID: {experiment_id}) at {artifact_location}")
             else:
                 experiment_id = experiment.experiment_id
                 logger.info(f"Using existing MLflow experiment: {experiment_name} (ID: {experiment_id})")

@@ -32,12 +32,8 @@ except ImportError:
     logger.warning("⚠ mlflow package not found. MLflow tracking will be skipped.")
 
 
-def load_config(config_path: Optional[str] = None) -> dict:
-    """Load configuration from config.yaml."""
-    if config_path is None:
-        config_path = os.path.join(PROJECT_ROOT, 'config.yaml')
-    with open(config_path, 'r') as f:
-        return yaml.safe_load(f)
+from utils.config import get_config, get_data_paths, get_model_config, get_mlflow_config
+
 
 
 def create_model_performance_visualizations(
@@ -145,10 +141,10 @@ def train_pipeline(force_rebuild_data: bool = False) -> Dict[str, Any]:
     logger.info(f"{'='*80}")
     
     # Load configuration
-    config = load_config()
-    data_paths_cfg = config.get('data_paths', {})
-    model_cfg = config.get('model', {})
-    mlflow_cfg = config.get('mlflow', {})
+    config = get_config()
+    data_paths_cfg = get_data_paths()
+    model_cfg = get_model_config()
+    mlflow_cfg = get_mlflow_config()
     
     # Construct target directories
     artifacts_data_dir = os.path.join(PROJECT_ROOT, data_paths_cfg.get('data_artifacts_dir', 'artifacts/data'))
