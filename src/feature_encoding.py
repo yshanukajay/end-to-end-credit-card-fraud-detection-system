@@ -9,6 +9,11 @@ from utils.logger import get_logger
 # Retrieve logger configured with file and console handlers
 logger = get_logger(__name__)
 
+# Derive the project root from this file's location so artifact paths always
+# resolve to the project root regardless of the caller's working directory.
+_PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+_ENCODE_DIR = os.path.join(_PROJECT_ROOT, 'artifacts', 'encode')
+
 
 class FeatureEncodingStrategy(ABC):
     """
@@ -32,7 +37,7 @@ class NominalEncodingStrategy(FeatureEncodingStrategy):
     def __init__(self, nominal_columns: List[str]):
         self.nominal_columns = nominal_columns
         self.encoder_mappings = {}  # Store category mappings for inference
-        os.makedirs('artifacts/encode', exist_ok=True)
+        os.makedirs(_ENCODE_DIR, exist_ok=True)
         logger.info(f"NominalEncodingStrategy initialized for ONE-HOT encoding of columns: {nominal_columns}")
 
     def encode(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -56,7 +61,7 @@ class NominalEncodingStrategy(FeatureEncodingStrategy):
             self.encoder_mappings[column] = unique_values
             
             # Save encoder mapping
-            encoder_path = os.path.join('artifacts/encode', f"{column}_encoder.json")
+            encoder_path = os.path.join(_ENCODE_DIR, f"{column}_encoder.json")
             with open(encoder_path, "w") as f:
                 json.dump({'categories': unique_values, 'encoding_type': 'one_hot'}, f)
             logger.info(f"  ✓ Saved one-hot encoder mapping to {encoder_path}")
@@ -134,10 +139,6 @@ class OrdinalEncodingStrategy(FeatureEncodingStrategy):
         logger.info("✓ ORDINAL ENCODING COMPLETE")
         logger.info(f"{'='*60}\n")
         return df_encoded
-
-
-# Typo-resilient alias class to support legacy codebase / boilerplate usage
-#OrdinalEncodingStratergy = OrdinalEncodingStrategy
 
 
 class FeatureEncodingPipeline:

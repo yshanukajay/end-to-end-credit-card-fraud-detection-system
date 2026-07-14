@@ -187,11 +187,6 @@ class SplitAndResampleStrategy(DataSplittingStrategy):
         return X_train_resampled, X_test, y_train_resampled, y_test
 
 
-# Typo-resilient aliases to support legacy codebase / boilerplate usage
-SimpleTrainTestSplitStratergy = SimpleTrainTestSplitStrategy
-StratifiedTrainTestSplitStratergy = StratifiedTrainTestSplitStrategy
-
-
 def create_default_resampled_splitter() -> SplitAndResampleStrategy:
     """
     Creates a pre-configured split-and-resample pipeline matching the notebook behavior:

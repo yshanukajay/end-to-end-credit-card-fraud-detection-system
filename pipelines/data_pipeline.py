@@ -205,10 +205,11 @@ def data_pipeline(
     artifacts_data_dir = os.path.join(PROJECT_ROOT, data_paths_cfg.get('data_artifacts_dir', 'artifacts/data'))
     os.makedirs(artifacts_data_dir, exist_ok=True)
 
-    x_train_path = os.path.join(artifacts_data_dir, 'X_train.csv')
-    x_test_path  = os.path.join(artifacts_data_dir, 'X_test.csv')
-    y_train_path = os.path.join(artifacts_data_dir, 'y_train.csv')
-    y_test_path  = os.path.join(artifacts_data_dir, 'y_test.csv')
+    x_train_path = os.path.join(PROJECT_ROOT, data_paths_cfg.get('X_train', 'artifacts/data/credit_card_fraud_X_train.npz'))
+    x_test_path  = os.path.join(PROJECT_ROOT, data_paths_cfg.get('X_test', 'artifacts/data/credit_card_fraud_X_test.npz'))
+    y_train_path = os.path.join(PROJECT_ROOT, data_paths_cfg.get('Y_train', 'artifacts/data/credit_card_fraud_y_train.npz'))
+    y_test_path  = os.path.join(PROJECT_ROOT, data_paths_cfg.get('Y_test', 'artifacts/data/credit_card_fraud_y_test.npz'))
+    features_json_path = os.path.join(artifacts_data_dir, 'features.json')
 
     viz_dir = os.path.join(PROJECT_ROOT, 'artifacts', 'visualizations')
     os.makedirs(viz_dir, exist_ok=True)
@@ -216,14 +217,22 @@ def data_pipeline(
     # -----------------------------------------------------------------------
     # Fast-path: return existing artifacts if present and rebuild not forced
     # -----------------------------------------------------------------------
-    artifacts_exist = all(os.path.exists(p) for p in [x_train_path, x_test_path, y_train_path, y_test_path])
+    artifacts_exist = all(os.path.exists(p) for p in [x_train_path, x_test_path, y_train_path, y_test_path, features_json_path])
 
     if artifacts_exist and not force_rebuild:
         logger.info("✓ Existing processed artifacts found — skipping rebuild.")
-        X_train = pd.read_csv(x_train_path)
-        X_test  = pd.read_csv(x_test_path)
-        y_train = pd.read_csv(y_train_path).squeeze()
-        y_test  = pd.read_csv(y_test_path).squeeze()
+        X_train_arr = np.load(x_train_path)['X_train']
+        X_test_arr  = np.load(x_test_path)['X_test']
+        y_train_arr = np.load(y_train_path)['y_train']
+        y_test_arr  = np.load(y_test_path)['y_test']
+        
+        with open(features_json_path, 'r') as f:
+            feature_names = json.load(f)
+            
+        X_train = pd.DataFrame(X_train_arr, columns=feature_names)
+        X_test  = pd.DataFrame(X_test_arr, columns=feature_names)
+        y_train = pd.Series(y_train_arr)
+        y_test  = pd.Series(y_test_arr)
 
         logger.info(f"  X_train : {X_train.shape}")
         logger.info(f"  X_test  : {X_test.shape}")
@@ -335,11 +344,15 @@ def data_pipeline(
     # -----------------------------------------------------------------------
     # Persist processed splits to disk
     # -----------------------------------------------------------------------
-    logger.info("\nSaving processed splits to disk...")
-    X_train.to_csv(x_train_path, index=False)
-    X_test.to_csv(x_test_path,   index=False)
-    y_train.to_csv(y_train_path, index=False, header=True)
-    y_test.to_csv(y_test_path,   index=False, header=True)
+    logger.info("\nSaving processed splits to disk in NPZ format...")
+    np.savez(x_train_path, X_train=X_train.values)
+    np.savez(x_test_path, X_test=X_test.values)
+    np.savez(y_train_path, y_train=y_train.values.ravel())
+    np.savez(y_test_path, y_test=y_test.values.ravel())
+    
+    with open(features_json_path, 'w') as f:
+        json.dump(list(X_train.columns), f)
+        
     logger.info(f"  ✓ Artifacts saved to: {artifacts_data_dir}")
 
     create_data_visualizations(pd.concat([X_train, X_test]), 'final', viz_dir)

@@ -344,9 +344,6 @@ class MinMaxScalingStrategy(FeatureScalingStrategy):
             return False
 
 
-# Typo-resilient aliases to support legacy codebase / boilerplate usage
-MinMaxScalingStratergy = MinMaxScalingStrategy
-StandardScalingStratergy = StandardScalingStrategy
 
 
 class FeatureScalingPipeline:
