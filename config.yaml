@@ -1,0 +1,192 @@
+data_paths:
+  raw_data: "dataset/raw/credit_card_fraud_10k.csv"
+  processed_data: "dataset/processed/credit_card_fraud_null_handled.csv"
+  imputed_data: "dataset/processed/credit_card_fraud_null_handled.csv"
+  processed_dir: "dataset/processed"
+  artifacts_dir: "artifacts"
+  data_artifacts_dir: "artifacts/data"
+  model_artifacts_dir: "artifacts/models"
+  X_train: "artifacts/data/credit_card_fraud_X_train.npz"
+  X_test: "artifacts/data/credit_card_fraud_X_test.npz"
+  Y_train: "artifacts/data/credit_card_fraud_y_train.npz"
+  Y_test: "artifacts/data/credit_card_fraud_y_test.npz"
+
+columns:
+  target: "is_fraud"
+  drop_columns: ["transaction_id"]
+  critical_columns: []
+  outlier_columns: ["amount", "velocity_last_24h", "device_trust_score", "cardholder_age"]
+  nominal_columns: ["merchant_category"]
+  numeric_columns: ["amount", "transaction_hour", "velocity_last_24h", "cardholder_age", "device_trust_score"]
+  feature_columns:
+    - "amount"
+    - "transaction_hour"
+    - "merchant_category"
+    - "foreign_transaction"
+    - "location_mismatch"
+    - "device_trust_score"
+    - "velocity_last_24h"
+    - "cardholder_age"
+
+missing_values:
+  strategy: "fill"
+  methods:
+    amount:
+      strategy: "fill"
+      method: "median"
+      relevant_column: "amount"
+    device_trust_score:
+      strategy: "fill"
+      method: "median"
+      relevant_column: "device_trust_score"
+    cardholder_age:
+      strategy: "fill"
+      method: "median"
+      relevant_column: "cardholder_age"
+    merchant_category:
+      strategy: "fill"
+      method: "mode"
+      relevant_column: "merchant_category"
+    foreign_transaction:
+      strategy: "fill"
+      method: "mode"
+      relevant_column: "foreign_transaction"
+    location_mismatch:
+      strategy: "fill"
+      method: "mode"
+      relevant_column: "location_mismatch"
+    transaction_hour:
+      strategy: "fill"
+      method: "mode"
+      relevant_column: "transaction_hour"
+    velocity_last_24h:
+      strategy: "fill"
+      method: "mode"
+      relevant_column: "velocity_last_24h"
+
+outlier_detection:
+  detection_method: "iqr"
+  handling_method: "cap"
+  z_score_threshold: 3.0
+
+feature_binning:
+  device_trust_score_bins:
+    Poor: [0, 25]
+    Fair: [25, 50]
+    Good: [50, 75]
+    Excellent: [75, 100]
+  device_trust_score_mapping:
+    Poor: 0
+    Fair: 1
+    Good: 2
+    Excellent: 3
+
+feature_encoding:
+  nominal_columns: ["merchant_category"]
+  ordinal_mappings:
+    device_trust_score_binned:
+      Poor: 0
+      Fair: 1
+      Good: 2
+      Excellent: 3
+
+feature_scaling:
+  scaling_type: "standard"
+  columns_to_scale: ["amount", "transaction_hour", "velocity_last_24h", "cardholder_age"]
+
+data_splitting:
+  split_type: "simple"
+  test_size: 0.2
+  random_state: 42
+  n_splits: 5
+
+training:
+  default_model_type: "random_forest"
+  default_training_strategy: "cv"
+  cv_folds: 5
+  random_state: 42
+  test_size: 0.2
+  validation_split: 0.2
+  early_stopping_patience: 10
+  max_iterations: 1000
+  hyperparameter_tuning:
+    enabled: false
+    search_method: "grid"
+    cv_folds: 5
+    n_iter: 20
+
+model:
+  model_type: "random_forest"
+  training_strategy: "cv"
+  data_path: "dataset/raw/credit_card_fraud_10k.csv"
+  model_path: "artifacts/model/random_forest_cv_model.pkl"
+  evaluation_path: "artifacts/model/random_forest_cv_evaluation_report.txt"
+  model_params:
+    n_estimators: 100
+    max_depth: 10
+    random_state: 42
+  model_types:
+    random_forest:
+      n_estimators: 100
+      max_depth: 10
+      random_state: 42
+    gradient_boosting:
+      n_estimators: 100
+      max_depth: 5
+      random_state: 42
+    logistic_regression:
+      random_state: 42
+      max_iter: 1000
+    svm:
+      random_state: 42
+      probability: true
+
+evaluation:
+  metrics:
+    - "accuracy"
+    - "precision"
+    - "recall"
+    - "f1-score"
+  cv_folds: 5
+  random_state: 42
+
+deployment:
+  model_name: "credit_card_fraud_detection_model"
+  model_version: "1.0.0"
+  api_endpoint: "/predict"
+  batch_size: 1000
+
+inference:
+  model_name: "random_forest_cv_model"
+  data_path: "artifacts/data/credit_card_fraud_X_test.npz"
+  sample_size: 100
+  save_path: "artifacts/predictions/predictions.csv"
+  batch_size: 1000
+  return_proba: true
+
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(levelname)s - %(message)s"
+  file: "pipeline.log"
+
+mlflow:
+  tracking_uri: "sqlite:///mlflow.db"  # SQLite database backend (file store deprecated)
+  experiment_name: "Credit Card Fraud Detection"
+  model_registry_name: "credit_card_fraud_prediction"
+  artifact_path: "model"
+  run_name_prefix: "fraud_run"
+  tags:
+    project: "credit_card_fraud_detection"
+    team: "ml_engineering"
+    environment: "development"
+  autolog: true
+
+environment:
+  experiment_name: "credit_card_fraud_analysis"
+
+pipeline:
+  data_pipeline_name: "data_processing_pipeline"
+  training_pipeline_name: "model_training_pipeline"
+  deployment_pipeline_name: "model_deployment_pipeline"
+  inference_pipeline_name: "inference_pipeline"
+  enable_cache: false
