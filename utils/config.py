@@ -162,7 +162,7 @@ def create_default_config() -> None:
     if not os.path.exists(config_path):
         default_config = {
             'data_paths': {
-                'raw_data': 'dataset/raw/credit_card_fraud_10k.csv',
+                'raw_data': 'dataset/raw/fraudTrain.csv',
                 'processed_data': 'dataset/processed/credit_card_fraud_null_handled.csv',
                 'imputed_data': 'dataset/processed/credit_card_fraud_null_handled.csv',
                 'processed_dir': 'dataset/processed',
@@ -178,52 +178,56 @@ def create_default_config() -> None:
                 'target': 'is_fraud',
                 'drop_columns': ['transaction_id'],
                 'critical_columns': [],
-                'outlier_columns': ['amount', 'velocity_last_24h', 'device_trust_score', 'cardholder_age'],
-                'nominal_columns': ['merchant_category'],
-                'numeric_columns': ['amount', 'transaction_hour', 'velocity_last_24h', 'cardholder_age', 'device_trust_score']
+                'outlier_columns': ['customer_age', 'distance_to_merchant'],
+                'nominal_columns': ['merchant_category', 'gender'],
+                'numeric_columns': ['amount', 'customer_age', 'distance_to_merchant', 'city_population']
             },
             'missing_values': {
                 'strategy': 'fill',
                 'methods': {
                     'amount': {'strategy': 'fill', 'method': 'median', 'relevant_column': 'amount'},
-                    'device_trust_score': {'strategy': 'fill', 'method': 'median', 'relevant_column': 'device_trust_score'},
-                    'cardholder_age': {'strategy': 'fill', 'method': 'median', 'relevant_column': 'cardholder_age'},
+                    'customer_age': {'strategy': 'fill', 'method': 'median', 'relevant_column': 'customer_age'},
+                    'distance_to_merchant': {'strategy': 'fill', 'method': 'median', 'relevant_column': 'distance_to_merchant'},
+                    'city_population': {'strategy': 'fill', 'method': 'median', 'relevant_column': 'city_population'},
                     'merchant_category': {'strategy': 'fill', 'method': 'mode', 'relevant_column': 'merchant_category'},
                     'foreign_transaction': {'strategy': 'fill', 'method': 'mode', 'relevant_column': 'foreign_transaction'},
                     'location_mismatch': {'strategy': 'fill', 'method': 'mode', 'relevant_column': 'location_mismatch'},
                     'transaction_hour': {'strategy': 'fill', 'method': 'mode', 'relevant_column': 'transaction_hour'},
-                    'velocity_last_24h': {'strategy': 'fill', 'method': 'mode', 'relevant_column': 'velocity_last_24h'}
+                    'velocity_last_24h': {'strategy': 'fill', 'method': 'mode', 'relevant_column': 'velocity_last_24h'},
+                    'gender': {'strategy': 'fill', 'method': 'mode', 'relevant_column': 'gender'},
+                    'day_of_week': {'strategy': 'fill', 'method': 'mode', 'relevant_column': 'day_of_week'},
+                    'is_weekend': {'strategy': 'fill', 'method': 'mode', 'relevant_column': 'is_weekend'}
                 }
             },
             'outlier_detection': {
-                'detection_method': 'iqr',
+                'detection_method': '3_sigma',
                 'handling_method': 'cap',
                 'z_score_threshold': 3.0
             },
             'feature_binning': {
-                'device_trust_score_bins': {'Poor': [0, 25], 'Fair': [25, 50], 'Good': [50, 75], 'Excellent': [75, 100]},
-                'device_trust_score_mapping': {'Poor': 0, 'Fair': 1, 'Good': 2, 'Excellent': 3}
+                'customer_age_bins': {'Youth': [0, 25], 'Adult': [25, 50], 'Senior': [50, 75], 'Elderly': [75, 100]},
+                'customer_age_mapping': {'Youth': 0, 'Adult': 1, 'Senior': 2, 'Elderly': 3}
             },
             'feature_encoding': {
-                'nominal_columns': ['merchant_category'],
+                'nominal_columns': ['merchant_category', 'gender'],
                 'ordinal_mappings': {
-                    'device_trust_score_binned': {'Poor': 0, 'Fair': 1, 'Good': 2, 'Excellent': 3}
+                    'customer_age_binned': {'Youth': 0, 'Adult': 1, 'Senior': 2, 'Elderly': 3}
                 }
             },
             'feature_scaling': {
                 'scaling_type': 'standard',
-                'columns_to_scale': ['amount', 'transaction_hour', 'velocity_last_24h', 'cardholder_age']
+                'columns_to_scale': ['amount', 'customer_age', 'distance_to_merchant', 'city_population']
             },
             'data_splitting': {
-                'split_type': 'simple',
+                'split_type': 'stratified',
                 'test_size': 0.2,
                 'random_state': 42,
-                'n_splits': 5
+                'n_splits': 6
             },
             'training': {
-                'default_model_type': 'random_forest',
+                'default_model_type': 'xgboost',
                 'default_training_strategy': 'cv',
-                'cv_folds': 5,
+                'cv_folds': 6,
                 'random_state': 42
             }
         }

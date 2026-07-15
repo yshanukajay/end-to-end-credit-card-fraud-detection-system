@@ -220,3 +220,8 @@ artifacts/*
 logs/*
 mlruns/*
 mlflow.db
+
+
+# local data and environments
+dataset/
+.venv/

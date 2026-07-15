@@ -160,16 +160,27 @@ class FeatureEncodingPipeline:
 def create_default_encoding_pipeline() -> FeatureEncodingPipeline:
     """
     Creates a pre-configured pipeline matching the strategy used in the Jupyter Notebook:
-    - Nominal/One-hot encoding of 'merchant_category'
-    - Ordinal encoding of 'device_trust_score_binned' with mapping {'Poor': 0, 'Fair': 1, 'Good': 2, 'Excellent': 3}
+    - Nominal/One-hot encoding of 'merchant_category' and 'gender'
+    - Ordinal encoding of binned age, hour, and distance features
     """
-    nominal_cols = ["merchant_category"]
+    nominal_cols = ["merchant_category", "gender"]
     ordinal_mappings = {
-        "device_trust_score_binned": {
-            "Poor": 0,
-            "Fair": 1,
-            "Good": 2,
-            "Excellent": 3
+        "customer_age_binned": {
+            "Youth": 0,
+            "Young-Adult": 1,
+            "Middle-Aged": 2,
+            "Senior": 3
+        },
+        "transaction_hour_binned": {
+            "Morning": 0,
+            "Afternoon": 1,
+            "Evening": 2,
+            "Night": 3
+        },
+        "distance_to_merchant_binned": {
+            "Close": 0,
+            "Moderate": 1,
+            "Far": 2
         }
     }
     

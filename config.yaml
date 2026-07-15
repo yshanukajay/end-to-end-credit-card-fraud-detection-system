@@ -1,5 +1,5 @@
 data_paths:
-  raw_data: "dataset/raw/credit_card_fraud_10k.csv"
+  raw_data: "dataset/raw/fraudTrain.csv"
   processed_data: "dataset/processed/credit_card_fraud_null_handled.csv"
   imputed_data: "dataset/processed/credit_card_fraud_null_handled.csv"
   processed_dir: "dataset/processed"
@@ -15,18 +15,39 @@ columns:
   target: "is_fraud"
   drop_columns: ["transaction_id"]
   critical_columns: []
-  outlier_columns: ["amount", "velocity_last_24h", "device_trust_score", "cardholder_age"]
-  nominal_columns: ["merchant_category"]
-  numeric_columns: ["amount", "transaction_hour", "velocity_last_24h", "cardholder_age", "device_trust_score"]
+  outlier_columns: ["customer_age", "distance_to_merchant"]
+  nominal_columns: ["merchant_category", "gender"]
+  numeric_columns: ["amount", "customer_age", "distance_to_merchant", "city_population"]
   feature_columns:
-    - "amount"
-    - "transaction_hour"
-    - "merchant_category"
-    - "foreign_transaction"
+    - "day_of_week"
+    - "is_weekend"
     - "location_mismatch"
-    - "device_trust_score"
     - "velocity_last_24h"
-    - "cardholder_age"
+    - "foreign_transaction"
+    - "amount"
+    - "city_population"
+    - "amount_log"
+    - "velocity_last_24h_log"
+    - "city_population_log"
+    - "customer_age_binned"
+    - "transaction_hour_binned"
+    - "distance_to_merchant_binned"
+    - "merchant_category_entertainment"
+    - "merchant_category_food_dining"
+    - "merchant_category_gas_transport"
+    - "merchant_category_grocery_net"
+    - "merchant_category_grocery_pos"
+    - "merchant_category_health_fitness"
+    - "merchant_category_home"
+    - "merchant_category_kids_pets"
+    - "merchant_category_misc_net"
+    - "merchant_category_misc_pos"
+    - "merchant_category_personal_care"
+    - "merchant_category_shopping_net"
+    - "merchant_category_shopping_pos"
+    - "merchant_category_travel"
+    - "gender_F"
+    - "gender_M"
 
 missing_values:
   strategy: "fill"
@@ -35,14 +56,18 @@ missing_values:
       strategy: "fill"
       method: "median"
       relevant_column: "amount"
-    device_trust_score:
+    customer_age:
       strategy: "fill"
       method: "median"
-      relevant_column: "device_trust_score"
-    cardholder_age:
+      relevant_column: "customer_age"
+    distance_to_merchant:
       strategy: "fill"
       method: "median"
-      relevant_column: "cardholder_age"
+      relevant_column: "distance_to_merchant"
+    city_population:
+      strategy: "fill"
+      method: "median"
+      relevant_column: "city_population"
     merchant_category:
       strategy: "fill"
       method: "mode"
@@ -63,83 +88,86 @@ missing_values:
       strategy: "fill"
       method: "mode"
       relevant_column: "velocity_last_24h"
+    gender:
+      strategy: "fill"
+      method: "mode"
+      relevant_column: "gender"
+    day_of_week:
+      strategy: "fill"
+      method: "mode"
+      relevant_column: "day_of_week"
+    is_weekend:
+      strategy: "fill"
+      method: "mode"
+      relevant_column: "is_weekend"
 
 outlier_detection:
-  detection_method: "iqr"
+  detection_method: "3_sigma"
   handling_method: "cap"
-  z_score_threshold: 3.0
 
 feature_binning:
-  device_trust_score_bins:
-    Poor: [0, 25]
-    Fair: [25, 50]
-    Good: [50, 75]
-    Excellent: [75, 100]
-  device_trust_score_mapping:
-    Poor: 0
-    Fair: 1
-    Good: 2
-    Excellent: 3
+  customer_age_bins:
+    Youth: [0, 25]
+    Adult: [25, 50]
+    Senior: [50, 75]
+    Elderly: [75, 100]
+  customer_age_mapping:
+    Youth: 0
+    Adult: 1
+    Senior: 2
+    Elderly: 3
 
 feature_encoding:
-  nominal_columns: ["merchant_category"]
+  nominal_columns: ["merchant_category", "gender"]
   ordinal_mappings:
-    device_trust_score_binned:
-      Poor: 0
-      Fair: 1
-      Good: 2
-      Excellent: 3
+    customer_age_binned:
+      Youth: 0
+      Adult: 1
+      Senior: 2
+      Elderly: 3
 
 feature_scaling:
   scaling_type: "standard"
-  columns_to_scale: ["amount", "transaction_hour", "velocity_last_24h", "cardholder_age"]
+  columns_to_scale: ["amount", "customer_age", "distance_to_merchant", "city_population"]
 
 data_splitting:
-  split_type: "simple"
+  split_type: "stratified"
   test_size: 0.2
   random_state: 42
-  n_splits: 5
+  n_splits: 6
 
 training:
-  default_model_type: "random_forest"
+  default_model_type: "xgboost"
   default_training_strategy: "cv"
-  cv_folds: 5
+  cv_folds: 6
   random_state: 42
   test_size: 0.2
   validation_split: 0.2
   early_stopping_patience: 10
   max_iterations: 1000
   hyperparameter_tuning:
-    enabled: false
+    enabled: true
     search_method: "grid"
-    cv_folds: 5
-    n_iter: 20
+    cv_folds: 6
+    n_iter: 4
 
 model:
-  model_type: "random_forest"
+  model_type: "xgboost"
   training_strategy: "cv"
-  data_path: "dataset/raw/credit_card_fraud_10k.csv"
-  model_path: "artifacts/model/random_forest_cv_model.pkl"
-  evaluation_path: "artifacts/model/random_forest_cv_evaluation_report.txt"
+  data_path: "dataset/raw/fraudTrain.csv"
+  model_path: "artifacts/models/xgboost_tuned_model.pkl"
+  evaluation_path: "artifacts/evaluation/kfold_final_confusion_matrix.png"
   model_params:
     n_estimators: 100
-    max_depth: 10
+    max_depth: 8
+    learning_rate: 0.2
     random_state: 42
   model_types:
-    random_forest:
+    xgboost:
       n_estimators: 100
-      max_depth: 10
+      max_depth: 8
+      learning_rate: 0.2
       random_state: 42
-    gradient_boosting:
-      n_estimators: 100
-      max_depth: 5
-      random_state: 42
-    logistic_regression:
-      random_state: 42
-      max_iter: 1000
-    svm:
-      random_state: 42
-      probability: true
 
 evaluation:
   metrics:
@@ -147,7 +175,7 @@ evaluation:
     - "precision"
     - "recall"
     - "f1-score"
-  cv_folds: 5
+  cv_folds: 6
   random_state: 42
 
 deployment:
@@ -157,7 +185,7 @@ deployment:
   batch_size: 1000
 
 inference:
-  model_name: "random_forest_cv_model"
+  model_name: "xgboost_tuned_model"
   data_path: "artifacts/data/credit_card_fraud_X_test.npz"
   sample_size: 100
   save_path: "artifacts/predictions/predictions.csv"
@@ -170,7 +198,7 @@ logging:
   file: "pipeline.log"
 
 mlflow:
-  tracking_uri: "sqlite:///mlflow.db"  # SQLite database backend (file store deprecated)
+  tracking_uri: "sqlite:///mlflow.db"
   experiment_name: "Credit Card Fraud Detection"
   model_registry_name: "credit_card_fraud_prediction"
   artifact_path: "model"

@@ -128,10 +128,11 @@ class SMOTENCOversampler:
     """
     Oversampler strategy using SMOTENC (Synthetic Minority Over-sampling Technique for Nominal Continuous).
     """
-    def __init__(self, continuous_cols: List[str], random_state: int = 42):
+    def __init__(self, continuous_cols: List[str], sampling_strategy: float = 0.1, random_state: int = 42):
         self.continuous_cols = continuous_cols
+        self.sampling_strategy = sampling_strategy
         self.random_state = random_state
-        logger.info(f"SMOTENCOversampler initialized with continuous columns: {continuous_cols}")
+        logger.info(f"SMOTENCOversampler initialized with continuous columns: {continuous_cols} and sampling_strategy={sampling_strategy}")
 
     def resample(self, X: pd.DataFrame, y: pd.Series) -> Tuple[pd.DataFrame, pd.Series]:
         logger.info(f"\n{'='*60}")
@@ -150,7 +151,11 @@ class SMOTENCOversampler:
         logger.info(f"  Detected continuous columns: {self.continuous_cols}")
         logger.info(f"  Detected categorical columns: {categorical_cols}")
         
-        smote = SMOTENC(categorical_features=categorical_features, random_state=self.random_state)
+        smote = SMOTENC(
+            categorical_features=categorical_features, 
+            random_state=self.random_state,
+            sampling_strategy=self.sampling_strategy
+        )
         X_resampled, y_resampled = smote.fit_resample(X, y)
         
         # Cast resampled data back to pandas objects with correct types/columns
@@ -194,6 +199,10 @@ def create_default_resampled_splitter() -> SplitAndResampleStrategy:
     - SMOTENC oversampling on the training set
     """
     splitter = StratifiedTrainTestSplitStrategy(test_size=0.2, random_state=42)
-    continuous_cols = ['amount', 'transaction_hour', 'velocity_last_24h', 'cardholder_age']
-    oversampler = SMOTENCOversampler(continuous_cols=continuous_cols, random_state=42)
+    continuous_cols = [
+        'amount', 'amount_log', 
+        'velocity_last_24h', 'velocity_last_24h_log', 
+        'city_population', 'city_population_log'
+    ]
+    oversampler = SMOTENCOversampler(continuous_cols=continuous_cols, sampling_strategy=0.1, random_state=42)
     return SplitAndResampleStrategy(splitter=splitter, oversampler=oversampler)

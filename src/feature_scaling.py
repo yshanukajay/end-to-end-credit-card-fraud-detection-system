@@ -326,16 +326,24 @@ class MinMaxScalingStrategy(FeatureScalingStrategy):
     @classmethod
     def create_scaler_artifacts_from_raw_data(
         cls, 
-        raw_data_path: str = 'dataset/raw/credit_card_fraud_10k.csv', 
+        raw_data_path: str = 'dataset/raw/fraudTrain.csv', 
         columns_to_scale: List[str] = None, 
         save_dir: str = 'artifacts/scale'
     ) -> bool:
         if not os.path.exists(raw_data_path):
             return False
         if columns_to_scale is None:
-            columns_to_scale = ['amount', 'transaction_hour', 'velocity_last_24h', 'cardholder_age']
+            columns_to_scale = [
+                'amount', 'amount_log', 
+                'velocity_last_24h', 'velocity_last_24h_log', 
+                'city_population', 'city_population_log'
+            ]
         try:
             df = pd.read_csv(raw_data_path)
+            # Add log transformed columns if they don't exist yet
+            for col in ['amount', 'velocity_last_24h', 'city_population']:
+                if f'{col}_log' not in df.columns and col in df.columns:
+                    df[f'{col}_log'] = np.log1p(df[col])
             scaler_instance = cls()
             scaler_instance.scaler.fit(df[columns_to_scale])
             scaler_instance.fitted = True
@@ -364,9 +372,13 @@ class FeatureScalingPipeline:
 def create_default_scaling_pipeline() -> FeatureScalingPipeline:
     """
     Creates a pre-configured pipeline matching the strategy used in the Jupyter Notebook:
-    - Z-score StandardScaler scaling of columns: ['amount', 'transaction_hour', 'velocity_last_24h', 'cardholder_age']
+    - Z-score StandardScaler scaling of columns: ['amount', 'amount_log', 'velocity_last_24h', 'velocity_last_24h_log', 'city_population', 'city_population_log']
     """
-    columns = ['amount', 'transaction_hour', 'velocity_last_24h', 'cardholder_age']
+    columns = [
+        'amount', 'amount_log', 
+        'velocity_last_24h', 'velocity_last_24h_log', 
+        'city_population', 'city_population_log'
+    ]
     return FeatureScalingPipeline(
         strategy=StandardScalingStrategy(),
         columns_to_scale=columns

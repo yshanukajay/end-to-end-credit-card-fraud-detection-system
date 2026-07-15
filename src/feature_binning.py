@@ -98,6 +98,139 @@ class CustomBinningStrategy(FeatureBinningStrategy):
         
         return df_binned
 
+class AgeBinningStrategy(FeatureBinningStrategy):
+    """
+    Strategy to bin customer age into Youth, Young-Adult, Middle-Aged, Senior cohorts.
+    """
+    def bin_feature(self, df: pd.DataFrame, column: str) -> pd.DataFrame:
+        logger.info(f"\n{'='*60}")
+        logger.info(f"FEATURE BINNING - AGE")
+        logger.info(f"{'='*60}")
+        logger.info(f"Starting age binning on column: '{column}'")
+        
+        if column not in df.columns:
+            logger.warning(f"⚠ Column [{column}] not found in the DataFrame.")
+            logger.info(f"{'='*60}\n")
+            return df
+            
+        df_binned = df.copy()
+        
+        def map_age_cohort(age):
+            if pd.isna(age):
+                return np.nan
+            elif age < 30:
+                return 'Youth'
+            elif age < 45:
+                return 'Young-Adult'
+            elif age < 65:
+                return 'Middle-Aged'
+            else:
+                return 'Senior'
+                
+        binned_column_name = f"{column}_binned"
+        df_binned[binned_column_name] = df_binned[column].apply(map_age_cohort)
+        
+        bin_counts = df_binned[binned_column_name].value_counts(dropna=False)
+        logger.info("\nBinning Results:")
+        for bin_name, count in bin_counts.items():
+            percentage = (count / len(df_binned)) * 100
+            logger.info(f"  ✓ {bin_name}: {count} ({percentage:.2f}%)")
+            
+        df_binned.drop(columns=[column], inplace=True)
+        logger.info(f"✓ Original column '{column}' removed, replaced with '{binned_column_name}'")
+        logger.info(f"{'='*60}\n")
+        
+        return df_binned
+
+
+class HourBinningStrategy(FeatureBinningStrategy):
+    """
+    Strategy to bin transaction hour into Night, Morning, Afternoon, Evening cohorts.
+    """
+    def bin_feature(self, df: pd.DataFrame, column: str) -> pd.DataFrame:
+        logger.info(f"\n{'='*60}")
+        logger.info(f"FEATURE BINNING - HOUR")
+        logger.info(f"{'='*60}")
+        logger.info(f"Starting hour binning on column: '{column}'")
+        
+        if column not in df.columns:
+            logger.warning(f"⚠ Column [{column}] not found in the DataFrame.")
+            logger.info(f"{'='*60}\n")
+            return df
+            
+        df_binned = df.copy()
+        
+        def map_hour_cohort(hour):
+            if pd.isna(hour):
+                return np.nan
+            elif hour >= 22 or hour < 6:
+                return 'Night'
+            elif hour < 12:
+                return 'Morning'
+            elif hour < 17:
+                return 'Afternoon'
+            else:
+                return 'Evening'
+                
+        binned_column_name = f"{column}_binned"
+        df_binned[binned_column_name] = df_binned[column].apply(map_hour_cohort)
+        
+        bin_counts = df_binned[binned_column_name].value_counts(dropna=False)
+        logger.info("\nBinning Results:")
+        for bin_name, count in bin_counts.items():
+            percentage = (count / len(df_binned)) * 100
+            logger.info(f"  ✓ {bin_name}: {count} ({percentage:.2f}%)")
+            
+        df_binned.drop(columns=[column], inplace=True)
+        logger.info(f"✓ Original column '{column}' removed, replaced with '{binned_column_name}'")
+        logger.info(f"{'='*60}\n")
+        
+        return df_binned
+
+
+class DistanceBinningStrategy(FeatureBinningStrategy):
+    """
+    Strategy to bin distance to merchant into Close, Moderate, Far cohorts.
+    """
+    def bin_feature(self, df: pd.DataFrame, column: str) -> pd.DataFrame:
+        logger.info(f"\n{'='*60}")
+        logger.info(f"FEATURE BINNING - DISTANCE")
+        logger.info(f"{'='*60}")
+        logger.info(f"Starting distance binning on column: '{column}'")
+        
+        if column not in df.columns:
+            logger.warning(f"⚠ Column [{column}] not found in the DataFrame.")
+            logger.info(f"{'='*60}\n")
+            return df
+            
+        df_binned = df.copy()
+        
+        def map_distance_cohort(dist):
+            if pd.isna(dist):
+                return np.nan
+            elif dist < 10:
+                return 'Close'
+            elif dist < 80:
+                return 'Moderate'
+            else:
+                return 'Far'
+                
+        binned_column_name = f"{column}_binned"
+        df_binned[binned_column_name] = df_binned[column].apply(map_distance_cohort)
+        
+        bin_counts = df_binned[binned_column_name].value_counts(dropna=False)
+        logger.info("\nBinning Results:")
+        for bin_name, count in bin_counts.items():
+            percentage = (count / len(df_binned)) * 100
+            logger.info(f"  ✓ {bin_name}: {count} ({percentage:.2f}%)")
+            
+        df_binned.drop(columns=[column], inplace=True)
+        logger.info(f"✓ Original column '{column}' removed, replaced with '{binned_column_name}'")
+        logger.info(f"{'='*60}\n")
+        
+        return df_binned
+
+
 class FeatureBinningPipeline:
     """
     Pipeline that runs a sequence of feature binning strategies on specific columns.
@@ -120,15 +253,12 @@ class FeatureBinningPipeline:
 def create_default_binning_pipeline() -> FeatureBinningPipeline:
     """
     Creates a pre-configured pipeline matching the strategy used in the Jupyter Notebook:
-    - Bins 'device_trust_score' with Poor (<25), Fair (<50), Good (<75), Excellent (>=75)
+    - Bins 'customer_age'
+    - Bins 'transaction_hour'
+    - Bins 'distance_to_merchant'
     """
-    device_trust_bins = {
-        "Poor": [0.0, 25.0],
-        "Fair": [25.0, 50.0],
-        "Good": [50.0, 75.0],
-        "Excellent": [75.0, 100.0]
-    }
-    
     return FeatureBinningPipeline([
-        (CustomBinningStrategy(bin_definitions=device_trust_bins), "device_trust_score")
+        (AgeBinningStrategy(), "customer_age"),
+        (HourBinningStrategy(), "transaction_hour"),
+        (DistanceBinningStrategy(), "distance_to_merchant")
     ])

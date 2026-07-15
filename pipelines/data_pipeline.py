@@ -1,473 +1,547 @@
 import os
 import sys
-import yaml
 import logging
 import pandas as pd
+from typing import Dict, Optional
 import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import json
-from typing import Dict
 
-# ---------------------------------------------------------------------------
-# Project root resolution — ensures imports work from any working directory
-# ---------------------------------------------------------------------------
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-sys.path.insert(0, PROJECT_ROOT)
-
-# ---------------------------------------------------------------------------
-# Logging — use the project-wide logger utility
-# ---------------------------------------------------------------------------
-from utils.logger import get_logger
-logger = get_logger(__name__)
-
-# Try to import mlflow to track experiments
-try:
-    import mlflow
-    from utils.mlflow_utils import MLflowTracker
-    MLFLOW_AVAILABLE = True
-except ImportError:
-    MLFLOW_AVAILABLE = False
-    logger.warning("⚠ mlflow package not found. MLflow tracking will be skipped.")
-
-# ---------------------------------------------------------------------------
-# src imports — wired to actual module filenames on disk
-# ---------------------------------------------------------------------------
-from src.data_ingestion import DataIngestorFactory
-
-from src.handling_missing_values import (
-    MissingValuePipeline,
-    DropDuplicatesStrategy,
-    MedianImputationStrategy,
-    ModeImputationStrategy,
-    create_default_missing_value_pipeline,
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
 )
+logger = logging.getLogger(__name__)
 
-from src.handling_outliers import (
-    OutlierHandlingPipeline,
-    IQRClipStrategy,
-    create_outlier_pipeline,
-)
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'src'))
+from data_ingestion import DataIngestorCSV
+from handle_missing_values import DropMissingValuesStrategy, FillMissingValuesStrategy, GenderImputer
+from outlier_detection import OutlierDetector, IQROutlierDetection
+from feature_binning import CustomBinningStratergy
+from feature_encoding import OrdinalEncodingStratergy, NominalEncodingStrategy
+from feature_scaling import MinMaxScalingStratergy
+from data_spiltter import SimpleTrainTestSplitStratergy
+sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'utils'))
+from config import get_data_paths, get_columns, get_missing_values_config, get_outlier_config, get_binning_config, get_encoding_config, get_scaling_config, get_splitting_config
+from mlflow_utils import MLflowTracker, setup_mlflow_autolog, create_mlflow_run_tags
+import mlflow
 
-from src.feature_binning import (
-    FeatureBinningPipeline,
-    CustomBinningStrategy,
-    create_default_binning_pipeline,
-)
-
-from src.feature_encoding import (
-    FeatureEncodingPipeline,
-    NominalEncodingStrategy,
-    OrdinalEncodingStrategy,
-    create_default_encoding_pipeline,
-)
-
-from src.feature_scaling import (
-    FeatureScalingPipeline,
-    StandardScalingStrategy,
-    create_default_scaling_pipeline,
-)
-
-from src.data_splitter import (
-    SplitAndResampleStrategy,
-    StratifiedTrainTestSplitStrategy,
-    SMOTENCOversampler,
-    create_default_resampled_splitter,
-)
-
-
-# ---------------------------------------------------------------------------
-# Config loader
-# ---------------------------------------------------------------------------
-
-def load_config(config_path: str = None) -> dict:
-    """Load configuration from config.yaml."""
-    if config_path is None:
-        config_path = os.path.join(PROJECT_ROOT, 'config.yaml')
-    with open(config_path, 'r') as f:
-        return yaml.safe_load(f)
-
-
-# ---------------------------------------------------------------------------
-# Visualisation helpers
-# ---------------------------------------------------------------------------
 
 def create_data_visualizations(df: pd.DataFrame, stage: str, artifacts_dir: str):
-    """Create essential data visualizations and save them to disk."""
+    """Create essential data visualizations for MLflow artifacts."""
     try:
         stage_dir = os.path.join(artifacts_dir, f"visualizations_{stage}")
         os.makedirs(stage_dir, exist_ok=True)
-
-        numeric_cols = df.select_dtypes(include=[np.number]).columns.tolist()
-
-        # --- distribution plot (top 4 numeric columns) ---
-        if numeric_cols:
-            n_plots = min(4, len(numeric_cols))
-            fig, axes = plt.subplots(2, 2, figsize=(14, 9))
+        
+        # 1. Data distribution for numeric columns
+        numeric_cols = df.select_dtypes(include=[np.number]).columns
+        if len(numeric_cols) > 0:
+            fig, axes = plt.subplots(2, 2, figsize=(15, 10))
             axes = axes.flatten()
-
-            for i, col in enumerate(numeric_cols[:n_plots]):
-                df[col].hist(bins=30, ax=axes[i], alpha=0.75, color='steelblue')
+            
+            for i, col in enumerate(numeric_cols[:4]):  # Top 4 numeric columns
+                df[col].hist(bins=30, ax=axes[i], alpha=0.7)
                 axes[i].set_title(f'{col} Distribution')
                 axes[i].set_xlabel(col)
                 axes[i].set_ylabel('Frequency')
-
-            for i in range(n_plots, 4):
+            
+            # Hide unused subplots
+            for i in range(len(numeric_cols), 4):
                 axes[i].set_visible(False)
-
-            plt.suptitle(f'Distributions — {stage}', fontsize=14)
+            
+            plt.suptitle(f'Data Distributions - {stage.title()}')
             plt.tight_layout()
-            plt.savefig(os.path.join(stage_dir, f'distributions_{stage}.png'), dpi=150, bbox_inches='tight')
+            plt.savefig(os.path.join(stage_dir, f'distributions_{stage}.png'), dpi=300, bbox_inches='tight')
             plt.close()
-
-        # --- correlation heatmap ---
+        
+        # 2. Correlation heatmap for numeric features
         if len(numeric_cols) > 1:
             plt.figure(figsize=(10, 8))
-            corr = df[numeric_cols].corr()
-            sns.heatmap(corr, annot=True, fmt='.2f', cmap='coolwarm', center=0,
-                        square=True, linewidths=0.5)
-            plt.title(f'Feature Correlation — {stage}')
+            correlation_matrix = df[numeric_cols].corr()
+            sns.heatmap(correlation_matrix, annot=True, cmap='coolwarm', center=0, 
+                       square=True, linewidths=0.5)
+            plt.title(f'Feature Correlation - {stage.title()}')
             plt.tight_layout()
-            plt.savefig(os.path.join(stage_dir, f'correlation_{stage}.png'), dpi=150, bbox_inches='tight')
+            plt.savefig(os.path.join(stage_dir, f'correlation_{stage}.png'), dpi=300, bbox_inches='tight')
             plt.close()
-
-        logger.info(f"✓ Visualizations saved for stage: {stage}")
-
+        
+        # Log visualizations to MLflow
+        for viz_file in os.listdir(stage_dir):
+            if viz_file.endswith('.png'):
+                mlflow.log_artifact(os.path.join(stage_dir, viz_file), f"visualizations/{stage}")
+        
+        logger.info(f"✓ Visualizations created for {stage}")
+        
     except Exception as e:
-        logger.warning(f"⚠ Could not create visualizations for '{stage}': {e}")
+        logger.error(f"✗ Failed to create visualizations for {stage}: {str(e)}")
 
 
-# ---------------------------------------------------------------------------
-# Main data pipeline
-# ---------------------------------------------------------------------------
+def log_stage_metrics(df: pd.DataFrame, stage: str, additional_metrics: Dict = None):
+    """Log key metrics for each processing stage."""
+    try:
+        metrics = {
+            f'{stage}_rows': df.shape[0],
+            f'{stage}_columns': df.shape[1],
+            f'{stage}_missing_values': df.isnull().sum().sum(),
+            f'{stage}_memory_mb': df.memory_usage(deep=True).sum() / (1024**2)
+        }
+        
+        if additional_metrics:
+            metrics.update({f'{stage}_{k}': v for k, v in additional_metrics.items()})
+        
+        mlflow.log_metrics(metrics)
+        logger.info(f"✓ Metrics logged for {stage}: {df.shape}")
+        
+    except Exception as e:
+        logger.error(f"✗ Failed to log metrics for {stage}: {str(e)}")
+
+
+def log_csv_artifacts(csv_files: Dict[str, str], artifacts_dir: str):
+    """Log final CSV files as MLflow artifacts with metadata."""
+    try:
+        csv_metadata = {
+            'csv_files': {},
+            'timestamp': pd.Timestamp.now().isoformat()
+        }
+        
+        # Create CSV artifacts directory
+        csv_artifacts_dir = os.path.join(artifacts_dir, 'final_csv_files')
+        os.makedirs(csv_artifacts_dir, exist_ok=True)
+        
+        total_files_logged = 0
+        
+        for file_name, file_path in csv_files.items():
+            if os.path.exists(file_path):
+                try:
+                    # Get file metadata
+                    file_size = os.path.getsize(file_path) / (1024**2)  # MB
+                    df = pd.read_csv(file_path)
+                    
+                    csv_metadata['csv_files'][file_name] = {
+                        'file_path': file_path,
+                        'file_size_mb': round(file_size, 2),
+                        'shape': df.shape,
+                        'columns': list(df.columns) if len(df.columns) <= 20 else f"{len(df.columns)} columns",
+                        'sample_values': df.head(2).to_dict() if df.shape[0] > 0 else "No data"
+                    }
+                    
+                    # Log the CSV file as artifact
+                    mlflow.log_artifact(file_path, "final_datasets")
+                    
+                    # Log key metrics
+                    mlflow.log_metrics({
+                        f'final_{file_name}_rows': df.shape[0],
+                        f'final_{file_name}_columns': df.shape[1],
+                        f'final_{file_name}_size_mb': file_size
+                    })
+                    
+                    total_files_logged += 1
+                    logger.info(f"✓ Logged {file_name}: {df.shape} ({file_size:.2f}MB)")
+                    
+                except Exception as e:
+                    logger.warning(f"⚠ Could not process {file_name}: {str(e)}")
+                    csv_metadata['csv_files'][file_name] = {
+                        'file_path': file_path,
+                        'error': str(e)
+                    }
+            else:
+                logger.warning(f"⚠ File not found: {file_path}")
+                csv_metadata['csv_files'][file_name] = {
+                    'file_path': file_path,
+                    'status': 'not_found'
+                }
+        
+        # Save CSV metadata
+        metadata_path = os.path.join(csv_artifacts_dir, 'final_csv_metadata.json')
+        with open(metadata_path, 'w') as f:
+            json.dump(csv_metadata, f, indent=2, default=str)
+        
+        # Log metadata as artifact
+        mlflow.log_artifact(metadata_path, "final_datasets")
+        
+        # Log summary metrics
+        mlflow.log_metrics({
+            'total_csv_files_logged': total_files_logged,
+            'csv_artifacts_created': len(csv_files)
+        })
+        
+        logger.info(f"✓ CSV artifacts logged: {total_files_logged}/{len(csv_files)} files")
+        
+    except Exception as e:
+        logger.error(f"✗ Failed to log CSV artifacts: {str(e)}")
+
 
 def data_pipeline(
-    data_path: str = None,
-    target_column: str = None,
-    test_size: float = None,
-    force_rebuild: bool = False,
+    data_path: str = 'data/raw/ChurnModelling.csv',
+    target_column: str = 'Exited',
+    test_size: float = 0.2,
+    force_rebuild: bool = False
 ) -> Dict[str, np.ndarray]:
     """
-    Execute the end-to-end data processing pipeline for credit card fraud detection.
-
-    Steps
-    -----
-    1. Data ingestion (CSV)
-    2. Missing value handling  (drop duplicates → median impute continuous → mode impute discrete)
-    3. Outlier handling        (IQR capping)
-    4. Feature binning         (device_trust_score → Poor / Fair / Good / Excellent)
-    5. Feature encoding        (one-hot: merchant_category | ordinal: device_trust_score_binned)
-    6. Feature scaling         (StandardScaler on continuous columns)
-    7. Drop non-feature columns (transaction_id)
-    8. Stratified train/test split + SMOTENC oversampling on training set
-
-    Returns
-    -------
-    dict with keys: X_train, X_test, y_train, y_test  (numpy arrays)
+    Execute comprehensive data processing pipeline with MLflow tracking.
+    
+    Args:
+        data_path: Path to the raw data file
+        target_column: Name of the target column
+        test_size: Proportion of data to use for testing
+        force_rebuild: Whether to force rebuild of existing artifacts
+        
+    Returns:
+        Dictionary containing processed train/test splits
     """
-    # -----------------------------------------------------------------------
-    # Load config
-    # -----------------------------------------------------------------------
-    config = load_config()
-
-    data_paths_cfg   = config.get('data_paths', {})
-    columns_cfg      = config.get('columns', {})
-    outlier_cfg      = config.get('outlier_detection', {})
-    binning_cfg      = config.get('feature_binning', {})
-    encoding_cfg     = config.get('feature_encoding', {})
-    scaling_cfg      = config.get('feature_scaling', {})
-    splitting_cfg    = config.get('data_splitting', {})
-
-    # Allow callers to override config defaults via arguments
-    if data_path is None:
-        data_path = data_paths_cfg.get('raw_data', 'dataset/raw/credit_card_fraud_10k.csv')
-    if target_column is None:
-        target_column = columns_cfg.get('target', 'is_fraud')
-    if test_size is None:
-        test_size = splitting_cfg.get('test_size', 0.2)
-
-    # Resolve relative paths against project root
-    if not os.path.isabs(data_path):
-        data_path = os.path.join(PROJECT_ROOT, data_path)
-
     logger.info(f"\n{'='*80}")
-    logger.info("STARTING DATA PIPELINE — Credit Card Fraud Detection")
+    logger.info(f"STARTING DATA PIPELINE")
     logger.info(f"{'='*80}")
-    logger.info(f"  Data path     : {data_path}")
-    logger.info(f"  Target column : {target_column}")
-    logger.info(f"  Test size     : {test_size}")
-    logger.info(f"  Force rebuild : {force_rebuild}")
-
-    # -----------------------------------------------------------------------
-    # Path validation
-    # -----------------------------------------------------------------------
+    
+    # Input validation
     if not os.path.exists(data_path):
         logger.error(f"✗ Data file not found: {data_path}")
         raise FileNotFoundError(f"Data file not found: {data_path}")
-
+    
     if not 0 < test_size < 1:
-        raise ValueError(f"test_size must be between 0 and 1, got: {test_size}")
-
-    # -----------------------------------------------------------------------
-    # Artifact paths
-    # -----------------------------------------------------------------------
-    artifacts_data_dir = os.path.join(PROJECT_ROOT, data_paths_cfg.get('data_artifacts_dir', 'artifacts/data'))
-    os.makedirs(artifacts_data_dir, exist_ok=True)
-
-    x_train_path = os.path.join(PROJECT_ROOT, data_paths_cfg.get('X_train', 'artifacts/data/credit_card_fraud_X_train.npz'))
-    x_test_path  = os.path.join(PROJECT_ROOT, data_paths_cfg.get('X_test', 'artifacts/data/credit_card_fraud_X_test.npz'))
-    y_train_path = os.path.join(PROJECT_ROOT, data_paths_cfg.get('Y_train', 'artifacts/data/credit_card_fraud_y_train.npz'))
-    y_test_path  = os.path.join(PROJECT_ROOT, data_paths_cfg.get('Y_test', 'artifacts/data/credit_card_fraud_y_test.npz'))
-    features_json_path = os.path.join(artifacts_data_dir, 'features.json')
-
-    viz_dir = os.path.join(PROJECT_ROOT, 'artifacts', 'visualizations')
-    os.makedirs(viz_dir, exist_ok=True)
-
-    # -----------------------------------------------------------------------
-    # Fast-path: return existing artifacts if present and rebuild not forced
-    # -----------------------------------------------------------------------
-    artifacts_exist = all(os.path.exists(p) for p in [x_train_path, x_test_path, y_train_path, y_test_path, features_json_path])
-
-    if artifacts_exist and not force_rebuild:
-        logger.info("✓ Existing processed artifacts found — skipping rebuild.")
-        X_train_arr = np.load(x_train_path)['X_train']
-        X_test_arr  = np.load(x_test_path)['X_test']
-        y_train_arr = np.load(y_train_path)['y_train']
-        y_test_arr  = np.load(y_test_path)['y_test']
+        logger.error(f"✗ Invalid test_size: {test_size}")
+        raise ValueError(f"Invalid test_size: {test_size}")
+    
+    try:
+        # Load configurations
+        data_paths = get_data_paths()
+        columns = get_columns()
+        outlier_config = get_outlier_config()
+        binning_config = get_binning_config()
+        encoding_config = get_encoding_config()
+        scaling_config = get_scaling_config()
+        splitting_config = get_splitting_config()
         
-        with open(features_json_path, 'r') as f:
-            feature_names = json.load(f)
+        # Initialize MLflow tracking
+        mlflow_tracker = MLflowTracker()
+        run_tags = create_mlflow_run_tags('data_pipeline', {
+            'data_source': data_path,
+            'force_rebuild': str(force_rebuild),
+            'target_column': target_column
+        })
+        run = mlflow_tracker.start_run(run_name='data_pipeline', tags=run_tags)
+        
+        # Create artifacts directory
+        run_artifacts_dir = os.path.join('artifacts', 'mlflow_run_artifacts', run.info.run_id)
+        os.makedirs(run_artifacts_dir, exist_ok=True)
+        
+        # Check for existing artifacts
+        x_train_path = os.path.join('artifacts', 'data', 'X_train.csv')
+        x_test_path = os.path.join('artifacts', 'data', 'X_test.csv')
+        y_train_path = os.path.join('artifacts', 'data', 'Y_train.csv')
+        y_test_path = os.path.join('artifacts', 'data', 'Y_test.csv')
+        
+        artifacts_exist = all(os.path.exists(p) for p in [x_train_path, x_test_path, y_train_path, y_test_path])
+        
+        if artifacts_exist and not force_rebuild:
+            logger.info("✓ Loading existing processed data artifacts")
+            X_train = pd.read_csv(x_train_path)
+            X_test = pd.read_csv(x_test_path)
+            Y_train = pd.read_csv(y_train_path)
+            Y_test = pd.read_csv(y_test_path)
             
-        X_train = pd.DataFrame(X_train_arr, columns=feature_names)
-        X_test  = pd.DataFrame(X_test_arr, columns=feature_names)
-        y_train = pd.Series(y_train_arr)
-        y_test  = pd.Series(y_test_arr)
-
-        logger.info(f"  X_train : {X_train.shape}")
-        logger.info(f"  X_test  : {X_test.shape}")
-        logger.info(f"  y_train : {y_train.shape}  (fraud rate: {y_train.mean():.3%})")
-        logger.info(f"  y_test  : {y_test.shape}   (fraud rate: {y_test.mean():.3%})")
-        logger.info(f"{'='*80}\n")
-
-        # Log data pipeline metrics to MLflow
-        if MLFLOW_AVAILABLE:
+            # Log existing data metrics
+            log_stage_metrics(X_train, 'existing_train')
+            log_stage_metrics(X_test, 'existing_test')
+            
+            # Log existing datasets as MLflow dataset artifacts
             try:
-                tracker = None
-                active_run = mlflow.active_run()
-                if not active_run:
-                    tracker = MLflowTracker()
-                    tracker.start_run(run_name="data_pipeline")
+                import mlflow.data
                 
-                dataset_info = {
-                    'total_rows': X_train.shape[0] + X_test.shape[0],
-                    'train_rows': X_train.shape[0],
-                    'test_rows': X_test.shape[0],
-                    'num_features': X_train.shape[1],
-                    'missing_values': 0,
-                    'outliers_removed': 0,
-                    'test_size': float(test_size),
-                    'random_state': int(splitting_cfg.get('random_state', 42)),
-                    'missing_strategy': str(config.get('missing_values', {}).get('strategy', 'fill')),
-                    'outlier_method': str(config.get('outlier_detection', {}).get('handling_method', 'cap')),
-                    'encoding_applied': True,
-                    'scaling_applied': True,
-                    'feature_names': list(X_train.columns)
-                }
+                # Create training dataset from existing data
+                train_dataset = mlflow.data.from_pandas(
+                    pd.concat([X_train, Y_train], axis=1),
+                    source=f"existing_processed_from_{data_path}",
+                    name="existing_churn_train_data",
+                    targets=target_column
+                )
                 
-                if tracker:
-                    tracker.log_data_pipeline_metrics(dataset_info)
-                    tracker.end_run()
-                else:
-                    temp_tracker = MLflowTracker()
-                    temp_tracker.log_data_pipeline_metrics(dataset_info)
-                logger.info("✓ Data pipeline metrics successfully logged to MLflow.")
+                # Create test dataset from existing data
+                test_dataset = mlflow.data.from_pandas(
+                    pd.concat([X_test, Y_test], axis=1),
+                    source=f"existing_processed_from_{data_path}",
+                    name="existing_churn_test_data",
+                    targets=target_column
+                )
+                
+                # Log the datasets
+                mlflow.log_input(train_dataset, context="training")
+                mlflow.log_input(test_dataset, context="testing")
+                
+                logger.info("✓ Existing datasets logged as MLflow dataset artifacts")
+                
             except Exception as e:
-                logger.warning(f"Failed to log data pipeline metrics to MLflow: {e}")
-
+                logger.warning(f"⚠ Could not log existing dataset artifacts: {str(e)}")
+            
+            # Log existing CSV files as artifacts with metadata
+            logger.info("Logging existing train/test CSV files as MLflow artifacts...")
+            existing_csv_files = {
+                'X_train': x_train_path,
+                'X_test': x_test_path,
+                'Y_train': y_train_path,
+                'Y_test': y_test_path
+            }
+            log_csv_artifacts(existing_csv_files, run_artifacts_dir)
+            
+            mlflow_tracker.log_data_pipeline_metrics({
+                'total_samples': len(X_train) + len(X_test),
+                'train_samples': len(X_train),
+                'test_samples': len(X_test)
+            })
+            mlflow_tracker.end_run()
+            
+            logger.info("✓ Data pipeline completed using existing artifacts")
+            return {
+                'X_train': X_train.values,
+                'X_test': X_test.values,
+                'Y_train': Y_train.values.ravel(),
+                'Y_test': Y_test.values.ravel()
+            }
+        
+        # Process data from scratch
+        logger.info("Processing data from scratch...")
+        
+        # Data ingestion
+        ingestor = DataIngestorCSV()
+        df = ingestor.ingest(data_path)
+        logger.info(f"✓ Raw data loaded: {df.shape}")
+        
+        # Log raw data metrics and create visualizations
+        log_stage_metrics(df, 'raw')
+        create_data_visualizations(df, 'raw', run_artifacts_dir)
+        
+        # Log raw dataset as MLflow dataset artifact
+        try:
+            import mlflow.data
+            from mlflow.data.pandas_dataset import PandasDataset
+            
+            # Create MLflow dataset from raw data
+            raw_dataset = mlflow.data.from_pandas(
+                df, 
+                source=data_path,
+                name="raw_churn_data",
+                targets=target_column
+            )
+            
+            # Log the dataset
+            mlflow.log_input(raw_dataset, context="raw_data")
+            logger.info("✓ Raw dataset logged as MLflow dataset artifact")
+            
+        except Exception as e:
+            logger.warning(f"⚠ Could not log raw dataset artifact: {str(e)}")
+            # Fallback: log raw data file as regular artifact
+            mlflow.log_artifact(data_path, "raw_data")
+        
+        # Validate target column
+        if target_column not in df.columns:
+            raise ValueError(f"Target column '{target_column}' not found")
+        
+        # Handle missing values
+        logger.info("Handling missing values...")
+        initial_shape = df.shape
+        drop_handler = DropMissingValuesStrategy(critical_columns=columns['critical_columns'])
+        age_handler = FillMissingValuesStrategy(method='mean', relevant_column='Age')
+        gender_handler = FillMissingValuesStrategy(
+            relevant_column='Gender',
+            is_custom_imputer=True,
+            custom_imputer=GenderImputer()
+        )
+        
+        df = drop_handler.handle(df)
+        df = age_handler.handle(df)
+        df = gender_handler.handle(df)
+        
+        rows_removed = initial_shape[0] - df.shape[0]
+        log_stage_metrics(df, 'missing_handled', {'rows_removed': rows_removed})
+        logger.info(f"✓ Missing values handled: {initial_shape} → {df.shape}")
+        
+        # Outlier detection
+        logger.info("Detecting and removing outliers...")
+        initial_shape = df.shape
+        outlier_detector = OutlierDetector(strategy=IQROutlierDetection())
+        df = outlier_detector.handle_outliers(df, columns['outlier_columns'])
+        
+        outliers_removed = initial_shape[0] - df.shape[0]
+        log_stage_metrics(df, 'outliers_removed', {'outliers_removed': outliers_removed})
+        logger.info(f"✓ Outliers removed: {initial_shape} → {df.shape}")
+        
+        # Feature binning
+        logger.info("Applying feature binning...")
+        binning = CustomBinningStratergy(binning_config['credit_score_bins'])
+        df = binning.bin_feature(df, 'CreditScore')
+        
+        # Log binning distribution
+        if 'CreditScoreBins' in df.columns:
+            bin_dist = df['CreditScoreBins'].value_counts().to_dict()
+            mlflow.log_metrics({f'credit_score_bin_{k}': v for k, v in bin_dist.items()})
+        
+        logger.info("✓ Feature binning completed")
+        
+        # Feature encoding
+        logger.info("Applying feature encoding...")
+        nominal_strategy = NominalEncodingStrategy(encoding_config['nominal_columns'])
+        ordinal_strategy = OrdinalEncodingStratergy(encoding_config['ordinal_mappings'])
+        
+        df = nominal_strategy.encode(df)
+        df = ordinal_strategy.encode(df)
+        
+        log_stage_metrics(df, 'encoded')
+        create_data_visualizations(df, 'encoded', run_artifacts_dir)
+        logger.info("✓ Feature encoding completed")
+        
+        # Feature scaling
+        logger.info("Applying feature scaling...")
+        minmax_strategy = MinMaxScalingStratergy()
+        df = minmax_strategy.scale(df, scaling_config['columns_to_scale'])
+        
+        # Save scaler artifacts for inference
+        logger.info("Saving scaler artifacts for inference...")
+        scaler_saved = minmax_strategy.save_scaler(scaling_config['columns_to_scale'], 'artifacts/scale')
+        if scaler_saved:
+            logger.info("✓ Scaler artifacts saved successfully")
+        else:
+            logger.warning("⚠ Failed to save scaler artifacts")
+        
+        logger.info("✓ Feature scaling completed")
+        
+        # Post-processing
+        drop_columns = ['RowNumber', 'CustomerId', 'Firstname', 'Lastname']
+        existing_drop_columns = [col for col in drop_columns if col in df.columns]
+        if existing_drop_columns:
+            df = df.drop(columns=existing_drop_columns)
+            logger.info(f"✓ Dropped columns: {existing_drop_columns}")
+        
+        # Data splitting
+        logger.info("Splitting data...")
+        splitting_strategy = SimpleTrainTestSplitStratergy(test_size=splitting_config['test_size'])
+        X_train, X_test, Y_train, Y_test = splitting_strategy.split_data(df, target_column)
+        
+        # Create directories and save splits
+        os.makedirs('artifacts/data', exist_ok=True)
+        X_train.to_csv(x_train_path, index=False)
+        X_test.to_csv(x_test_path, index=False)
+        Y_train.to_csv(y_train_path, index=False)
+        Y_test.to_csv(y_test_path, index=False)
+        
+        logger.info("✓ Data splitting completed")
+        logger.info(f"  • X_train: {X_train.shape}")
+        logger.info(f"  • X_test: {X_test.shape}")
+        logger.info(f"  • Y_train: {Y_train.shape}")
+        logger.info(f"  • Y_test: {Y_test.shape}")
+        
+        # Final metrics and visualizations
+        log_stage_metrics(X_train, 'final_train')
+        log_stage_metrics(X_test, 'final_test')
+        create_data_visualizations(pd.concat([X_train, X_test]), 'final', run_artifacts_dir)
+        
+        # Log final processed datasets as MLflow dataset artifacts
+        try:
+            import mlflow.data
+            
+            # Create training dataset
+            train_dataset = mlflow.data.from_pandas(
+                pd.concat([X_train, Y_train], axis=1),
+                source=f"processed_from_{data_path}",
+                name="processed_churn_train_data",
+                targets=target_column
+            )
+            
+            # Create test dataset  
+            test_dataset = mlflow.data.from_pandas(
+                pd.concat([X_test, Y_test], axis=1),
+                source=f"processed_from_{data_path}",
+                name="processed_churn_test_data", 
+                targets=target_column
+            )
+            
+            # Log the datasets
+            mlflow.log_input(train_dataset, context="training")
+            mlflow.log_input(test_dataset, context="testing")
+            
+            logger.info("✓ Final processed datasets logged as MLflow dataset artifacts")
+            
+        except Exception as e:
+            logger.warning(f"⚠ Could not log processed dataset artifacts: {str(e)}")
+        
+        # Log comprehensive pipeline metrics
+        comprehensive_metrics = {
+            'total_samples': len(X_train) + len(X_test),
+            'train_samples': len(X_train),
+            'test_samples': len(X_test),
+            'final_features': X_train.shape[1],
+            'train_class_0': (Y_train == 0).sum().iloc[0],
+            'train_class_1': (Y_train == 1).sum().iloc[0],
+            'test_class_0': (Y_test == 0).sum().iloc[0],
+            'test_class_1': (Y_test == 1).sum().iloc[0]
+        }
+        
+        mlflow_tracker.log_data_pipeline_metrics(comprehensive_metrics)
+        
+        # Log parameters
+        mlflow.log_params({
+            'final_feature_names': list(X_train.columns),
+            'preprocessing_steps': ['missing_values', 'outlier_detection', 'feature_binning', 'feature_encoding', 'feature_scaling'],
+            'data_pipeline_version': '2.1_optimized'
+        })
+        
+        # Log processed datasets as artifacts
+        mlflow.log_artifact(x_train_path, "processed_datasets")
+        mlflow.log_artifact(x_test_path, "processed_datasets")
+        mlflow.log_artifact(y_train_path, "processed_datasets")
+        mlflow.log_artifact(y_test_path, "processed_datasets")
+        
+        # Log final CSV files as artifacts with detailed metadata
+        logger.info("Logging final train/test CSV files as MLflow artifacts...")
+        final_csv_files = {
+            'X_train': x_train_path,
+            'X_test': x_test_path,
+            'Y_train': y_train_path,
+            'Y_test': y_test_path
+        }
+        log_csv_artifacts(final_csv_files, run_artifacts_dir)
+        
+        mlflow_tracker.end_run()
+        
+        logger.info("✓ Data pipeline completed successfully!")
+        logger.info(f"{'='*80}\n")
+        
         return {
             'X_train': X_train.values,
-            'X_test':  X_test.values,
-            'y_train': y_train.values.ravel(),
-            'y_test':  y_test.values.ravel(),
+            'X_test': X_test.values,
+            'Y_train': Y_train.values.ravel(),
+            'Y_test': Y_test.values.ravel()
         }
-
-    # -----------------------------------------------------------------------
-    # Step 1 — Data ingestion
-    # -----------------------------------------------------------------------
-    logger.info("\n[Step 1/8] Data Ingestion")
-    ingestor = DataIngestorFactory.get_ingestor(data_path)
-    df = ingestor.ingest(data_path)
-    logger.info(f"  ✓ Raw data loaded: {df.shape}")
-
-    # Validate target column
-    if target_column not in df.columns:
-        raise ValueError(f"Target column '{target_column}' not found in dataset. "
-                         f"Available columns: {list(df.columns)}")
-
-    create_data_visualizations(df, 'raw', viz_dir)
-
-    # -----------------------------------------------------------------------
-    # Step 2 — Missing value handling
-    # -----------------------------------------------------------------------
-    logger.info("\n[Step 2/8] Missing Value Handling")
-    mv_pipeline = create_default_missing_value_pipeline()
-    df = mv_pipeline.execute(df)
-    logger.info(f"  ✓ After missing value handling: {df.shape}")
-
-    # -----------------------------------------------------------------------
-    # Step 3 — Outlier handling (IQR capping)
-    # -----------------------------------------------------------------------
-    logger.info("\n[Step 3/8] Outlier Handling")
-    outlier_cols   = columns_cfg.get('outlier_columns', ['amount', 'velocity_last_24h', 'device_trust_score', 'cardholder_age'])
-    outlier_method = outlier_cfg.get('handling_method', 'cap')
-    outlier_pipeline = create_outlier_pipeline(method=outlier_method, cap_columns=outlier_cols)
-    df = outlier_pipeline.execute(df)
-    logger.info(f"  ✓ After outlier handling: {df.shape}")
-
-    # -----------------------------------------------------------------------
-    # Step 4 — Feature binning (device_trust_score)
-    # -----------------------------------------------------------------------
-    logger.info("\n[Step 4/8] Feature Binning")
-    binning_pipeline = create_default_binning_pipeline()
-    df = binning_pipeline.execute(df)
-    logger.info(f"  ✓ After feature binning: {df.shape}")
-
-    # -----------------------------------------------------------------------
-    # Step 5 — Feature encoding (one-hot + ordinal)
-    # -----------------------------------------------------------------------
-    logger.info("\n[Step 5/8] Feature Encoding")
-    encoding_pipeline = create_default_encoding_pipeline()
-    df = encoding_pipeline.execute(df)
-    logger.info(f"  ✓ After feature encoding: {df.shape}")
-
-    create_data_visualizations(df, 'encoded', viz_dir)
-
-    # -----------------------------------------------------------------------
-    # Step 6 — Feature scaling (StandardScaler on continuous columns)
-    # -----------------------------------------------------------------------
-    logger.info("\n[Step 6/8] Feature Scaling")
-    scaling_pipeline = create_default_scaling_pipeline()
-    df = scaling_pipeline.execute(df)
-    logger.info(f"  ✓ After feature scaling: {df.shape}")
-
-    # Save scaler for later inference use
-    scaler_save_dir = os.path.join(PROJECT_ROOT, 'artifacts', 'scale')
-    saved = scaling_pipeline.strategy.save_scaler(
-        columns_to_scale=scaling_cfg.get('columns_to_scale', ['amount', 'transaction_hour', 'velocity_last_24h', 'cardholder_age']),
-        save_dir=scaler_save_dir,
-    )
-    if saved:
-        logger.info(f"  ✓ Scaler artifacts saved to: {scaler_save_dir}")
-    else:
-        logger.warning("  ⚠ Scaler could not be saved.")
-
-    # -----------------------------------------------------------------------
-    # Step 7 — Drop non-feature columns (e.g. transaction_id)
-    # -----------------------------------------------------------------------
-    logger.info("\n[Step 7/8] Dropping Non-Feature Columns")
-    drop_cols = columns_cfg.get('drop_columns', ['transaction_id'])
-    existing_drop_cols = [c for c in drop_cols if c in df.columns]
-    if existing_drop_cols:
-        df = df.drop(columns=existing_drop_cols)
-        logger.info(f"  ✓ Dropped columns: {existing_drop_cols}")
-    else:
-        logger.info("  ✓ No columns to drop (already absent or none configured).")
-
-    logger.info(f"  Final feature set ({df.shape[1] - 1} features + target): {[c for c in df.columns if c != target_column]}")
-
-    # -----------------------------------------------------------------------
-    # Step 8 — Stratified split + SMOTENC oversampling on training set
-    # -----------------------------------------------------------------------
-    logger.info("\n[Step 8/8] Stratified Split + SMOTENC Oversampling")
-    pipeline = create_default_resampled_splitter()
-    X_train, X_test, y_train, y_test = pipeline.split_data(df, target_column)
-
-    logger.info(f"  ✓ X_train : {X_train.shape}  (fraud rate after SMOTENC: {y_train.mean():.3%})")
-    logger.info(f"  ✓ X_test  : {X_test.shape}   (fraud rate: {y_test.mean():.3%})")
-
-    # -----------------------------------------------------------------------
-    # Persist processed splits to disk
-    # -----------------------------------------------------------------------
-    logger.info("\nSaving processed splits to disk in NPZ format...")
-    np.savez(x_train_path, X_train=X_train.values.astype(float))
-    np.savez(x_test_path, X_test=X_test.values.astype(float))
-    np.savez(y_train_path, y_train=y_train.values.astype(int).ravel())
-    np.savez(y_test_path, y_test=y_test.values.astype(int).ravel())
-    
-    with open(features_json_path, 'w') as f:
-        json.dump(list(X_train.columns), f)
         
-    logger.info(f"  ✓ Artifacts saved to: {artifacts_data_dir}")
+    except Exception as e:
+        logger.error(f"✗ Data pipeline failed: {str(e)}")
+        if 'mlflow_tracker' in locals():
+            mlflow_tracker.end_run()
+        raise
 
-    create_data_visualizations(pd.concat([X_train, X_test]), 'final', viz_dir)
-
-    logger.info(f"\n{'='*80}")
-    logger.info("✓ DATA PIPELINE COMPLETE")
-    logger.info(f"{'='*80}\n")
-
-    # Log data pipeline metrics to MLflow
-    if MLFLOW_AVAILABLE:
-        try:
-            tracker = None
-            active_run = mlflow.active_run()
-            if not active_run:
-                tracker = MLflowTracker()
-                tracker.start_run(run_name="data_pipeline")
-            
-            dataset_info = {
-                'total_rows': X_train.shape[0] + X_test.shape[0],
-                'train_rows': X_train.shape[0],
-                'test_rows': X_test.shape[0],
-                'num_features': X_train.shape[1],
-                'missing_values': 0,
-                'outliers_removed': 0,
-                'test_size': float(test_size),
-                'random_state': int(splitting_cfg.get('random_state', 42)),
-                'missing_strategy': str(config.get('missing_values', {}).get('strategy', 'fill')),
-                'outlier_method': str(config.get('outlier_detection', {}).get('handling_method', 'cap')),
-                'encoding_applied': True,
-                'scaling_applied': True,
-                'feature_names': list(X_train.columns)
-            }
-            
-            if tracker:
-                tracker.log_data_pipeline_metrics(dataset_info)
-                tracker.end_run()
-            else:
-                temp_tracker = MLflowTracker()
-                temp_tracker.log_data_pipeline_metrics(dataset_info)
-            logger.info("✓ Data pipeline metrics successfully logged to MLflow.")
-        except Exception as e:
-            logger.warning(f"Failed to log data pipeline metrics to MLflow: {e}")
-
-    return {
-        'X_train': X_train.values,
-        'X_test':  X_test.values,
-        'y_train': y_train.values.ravel(),
-        'y_test':  y_test.values.ravel(),
-    }
-
-
-# ---------------------------------------------------------------------------
-# Entry point
-# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    """
+    Execute the data pipeline when the script is run directly.
+    """
     try:
-        force = '--force' in sys.argv or '-f' in sys.argv
-        result = data_pipeline(force_rebuild=force)
-
-        print("\n" + "=" * 60)
-        print("[DATA PIPELINE EXECUTION SUMMARY]")
-        print("=" * 60)
-        print(f"[OK] Training samples : {result['X_train'].shape[0]:,}  (after SMOTENC)")
-        print(f"[OK] Test samples     : {result['X_test'].shape[0]:,}")
-        print(f"[OK] Features         : {result['X_train'].shape[1]}")
-        print(f"[OK] Data artifacts   : artifacts/data/")
-        print(f"[OK] Scaler artifacts : artifacts/scale/")
-        print("=" * 60)
-
+        logger.info("Starting data pipeline execution...")
+        result = data_pipeline()
+        logger.info("Data pipeline execution completed successfully!")
+        
+        # Print summary
+        print("\n" + "="*60)
+        print("📊 DATA PIPELINE EXECUTION SUMMARY")
+        print("="*60)
+        print(f"✅ Training samples: {result['X_train'].shape[0]:,}")
+        print(f"✅ Test samples: {result['X_test'].shape[0]:,}")
+        print(f"✅ Features: {result['X_train'].shape[1]}")
+        print(f"✅ Data artifacts saved to: artifacts/data/")
+        print(f"✅ Scaler artifacts saved to: artifacts/scale/")
+        print("="*60)
+        
     except Exception as e:
-        logger.error(f"Data pipeline failed: {e}")
-        print(f"\n[FAILED] Data pipeline failed: {e}")
+        logger.error(f"Failed to execute data pipeline: {str(e)}")
+        print(f"\n❌ Data pipeline execution failed: {str(e)}")
         exit(1)
