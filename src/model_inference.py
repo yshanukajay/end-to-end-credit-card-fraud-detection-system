@@ -22,7 +22,6 @@ from utils.logger import get_logger
 # Retrieve logger configured with file and console handlers
 logger = get_logger(__name__)
 
-
 from utils.config import (
     get_config,
     get_model_config,
@@ -30,6 +29,18 @@ from utils.config import (
     get_encoding_config,
     get_scaling_config,
 )
+
+
+def haversine_distance(lat1, lon1, lat2, lon2):
+    """Calculate haversine distance in miles."""
+    R = 3958.8  # Earth radius in miles
+    lat1, lon1, lat2, lon2 = map(np.radians, [lat1, lon1, lat2, lon2])
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+    a = np.sin(dlat/2.0)**2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon/2.0)**2
+    c = 2 * np.arcsin(np.sqrt(a))
+    return R * c
+
 
 class ModelInference:
     """
@@ -50,7 +61,7 @@ class ModelInference:
         # Determine model path
         if model_path is None:
             model_cfg = get_model_config()
-            model_path = model_cfg.get('model_path', 'artifacts/model/random_forest_cv_model.pkl')
+            model_path = model_cfg.get('model_path', 'artifacts/models/xgboost_tuned_model.pkl')
             
         if not os.path.isabs(model_path):
             model_path = os.path.join(PROJECT_ROOT, model_path)
@@ -114,30 +125,17 @@ class ModelInference:
         logger.info(f"Loading encoders from: {encoders_dir}")
         if not os.path.exists(encoders_dir):
             logger.warning(f"⚠ Encoders directory not found: {encoders_dir}. Using defaults.")
-            # Default categories for fallback
-            self.encoders['merchant_category'] = {
-                'categories': ['Clothing', 'Electronics', 'Food', 'Grocery', 'Travel'],
-                'encoding_type': 'one_hot'
-            }
             return
             
         try:
             encoder_files = [f for f in os.listdir(encoders_dir) if f.endswith('_encoder.json')]
-            if not encoder_files:
-                logger.warning("⚠ No encoder files found. Using default categories.")
-                self.encoders['merchant_category'] = {
-                    'categories': ['Clothing', 'Electronics', 'Food', 'Grocery', 'Travel'],
-                    'encoding_type': 'one_hot'
-                }
-                return
-                
             for file in encoder_files:
                 feature_name = file.split('_encoder.json')[0]
                 file_path = os.path.join(encoders_dir, file)
                 with open(file_path, 'r') as f:
                     encoder_data = json.load(f)
                     self.encoders[feature_name] = encoder_data
-                logger.info(f"  ✓ Loaded encoder for '{feature_name}': {encoder_data.get('categories', [])}")
+                logger.info(f"  ✓ Loaded encoder for '{feature_name}'")
         except Exception as e:
             logger.error(f"✗ Failed to load encoders: {str(e)}")
             raise
@@ -154,91 +152,144 @@ class ModelInference:
             raise ValueError("Input data cannot be empty.")
             
         try:
-            # Convert to DataFrame
             df = pd.DataFrame([data])
-            logger.info(f"Raw input data keys: {list(df.columns)}")
             
-            # 1. Feature Binning (device_trust_score)
-            if 'device_trust_score' in df.columns:
-                logger.info("Applying feature binning for device_trust_score...")
-                device_trust_bins = {
-                    "Poor": [0.0, 25.0],
-                    "Fair": [25.0, 50.0],
-                    "Good": [50.0, 75.0],
-                    "Excellent": [75.0, 100.0]
-                }
-                bin_strategy = CustomBinningStrategy(bin_definitions=device_trust_bins)
-                df = bin_strategy.bin_feature(df, 'device_trust_score')
-            else:
-                logger.warning("⚠ 'device_trust_score' not found in input data. Binning skipped.")
-                
-            # 2. Feature Encoding (one-hot & ordinal)
-            logger.info("Applying feature encoding...")
-            
-            # Nominal/One-hot encoding of merchant_category
-            col = 'merchant_category'
-            if col in df.columns:
-                original_value = df[col].iloc[0]
-                encoder_data = self.encoders.get(col, {})
-                categories = encoder_data.get('categories', ['Clothing', 'Electronics', 'Food', 'Grocery', 'Travel'])
-                
-                for cat in categories:
-                    new_col_name = f"{col}_{cat}"
-                    df[new_col_name] = (df[col] == cat).astype(int)
-                    
-                df = df.drop(columns=[col])
-                logger.info(f"  ✓ One-hot encoded '{col}': {original_value} → columns generated for {categories}")
-            else:
-                # If merchant category columns are already present in mock or missing
-                logger.warning("⚠ 'merchant_category' not found in input data.")
-                
-            # Ordinal mapping of device_trust_score_binned
-            ordinal_mappings = {
-                "device_trust_score_binned": {
-                    "Poor": 0,
-                    "Fair": 1,
-                    "Good": 2,
-                    "Excellent": 3
-                }
+            # Map standard raw names if present
+            raw_rename = {
+                'amt': 'amount',
+                'category': 'merchant_category',
+                'city_pop': 'city_population'
             }
-            ord_strategy = OrdinalEncodingStrategy(ordinal_mappings=ordinal_mappings)
-            df = ord_strategy.encode(df)
+            df = df.rename(columns={k: v for k, v in raw_rename.items() if k in df.columns})
+
+            # Ensure all standard baseline values are present or fallback
+            if 'amount' not in df.columns:
+                df['amount'] = 0.0
+            if 'city_population' not in df.columns:
+                df['city_population'] = 1000.0
+            if 'velocity_last_24h' not in df.columns:
+                df['velocity_last_24h'] = 0.0
+
+            # 1. Feature Engineering: Datetimes & Age
+            if 'trans_date_trans_time' in df.columns:
+                trans_dt = pd.to_datetime(df['trans_date_trans_time'])
+                df['day_of_week'] = trans_dt.dt.dayofweek.astype(int)
+                df['is_weekend'] = trans_dt.dt.dayofweek.isin([5, 6]).astype(int)
+                df['transaction_hour'] = trans_dt.dt.hour.astype(int)
+            else:
+                df['day_of_week'] = 0
+                df['is_weekend'] = 0
+                df['transaction_hour'] = 12
+
+            if 'dob' in df.columns and 'trans_date_trans_time' in df.columns:
+                trans_dt = pd.to_datetime(df['trans_date_trans_time'])
+                dob_dt = pd.to_datetime(df['dob'])
+                df['customer_age'] = ((trans_dt - dob_dt).dt.days // 365).astype(int)
+            else:
+                df['customer_age'] = 35
+
+            # 2. Distance Calculations
+            if all(col in df.columns for col in ['lat', 'long', 'merch_lat', 'merch_long']):
+                df['distance_to_merchant'] = haversine_distance(
+                    df['lat'].iloc[0], df['long'].iloc[0],
+                    df['merch_lat'].iloc[0], df['merch_long'].iloc[0]
+                )
+                df['location_mismatch'] = (df['distance_to_merchant'] > 80).astype(int)
+                df['foreign_transaction'] = (df['distance_to_merchant'] > 150).astype(int)
+            else:
+                df['distance_to_merchant'] = 10.0
+                df['location_mismatch'] = 0
+                df['foreign_transaction'] = 0
+
+            # 3. Log Transformations
+            df['amount_log'] = np.log1p(df['amount'])
+            df['velocity_last_24h_log'] = np.log1p(df['velocity_last_24h'])
+            df['city_population_log'] = np.log1p(df['city_population'])
+
+            # 4. Binning Mappings
+            # customer_age_binned
+            age = df['customer_age'].iloc[0]
+            if age <= 25:
+                df['customer_age_binned'] = 0
+            elif age <= 50:
+                df['customer_age_binned'] = 1
+            elif age <= 75:
+                df['customer_age_binned'] = 2
+            else:
+                df['customer_age_binned'] = 3
+
+            # transaction_hour_binned
+            hour = df['transaction_hour'].iloc[0]
+            if hour >= 22 or hour <= 6:
+                df['transaction_hour_binned'] = 0
+            elif hour <= 12:
+                df['transaction_hour_binned'] = 1
+            elif hour <= 17:
+                df['transaction_hour_binned'] = 2
+            else:
+                df['transaction_hour_binned'] = 3
+
+            # distance_to_merchant_binned
+            dist = df['distance_to_merchant'].iloc[0]
+            if dist <= 10:
+                df['distance_to_merchant_binned'] = 0
+            elif dist <= 50:
+                df['distance_to_merchant_binned'] = 1
+            elif dist <= 100:
+                df['distance_to_merchant_binned'] = 2
+            else:
+                df['distance_to_merchant_binned'] = 3
+
+            # 5. One-hot Nominals Encoding
+            # Merchant Category Encoding
+            if 'merchant_category' not in df.columns:
+                df['merchant_category'] = 'travel'
+            category_val = str(df['merchant_category'].iloc[0]).lower().strip().replace(' ', '_').replace('&', '_').replace('/', '_')
             
-            # 3. Feature Scaling
+            categories = ["entertainment", "food_dining", "gas_transport", "grocery_net", "grocery_pos", "health_fitness", "home", "kids_pets", "misc_net", "misc_pos", "personal_care", "shopping_net", "shopping_pos", "travel"]
+            for cat in categories:
+                df[f"merchant_category_{cat}"] = int(category_val == cat)
+
+            # Gender Encoding
+            if 'gender' not in df.columns:
+                df['gender'] = 'F'
+            gender_val = str(df['gender'].iloc[0]).upper().strip()
+            for gen in ["F", "M"]:
+                df[f"gender_{gen}"] = int(gender_val == gen)
+
+            # 6. Feature Scaling
             if hasattr(self, 'scaler') and self.scaler.fitted:
                 logger.info("Applying feature scaling...")
-                columns_to_scale = self.scaling_config.get('columns_to_scale', ['amount', 'transaction_hour', 'velocity_last_24h', 'cardholder_age'])
+                columns_to_scale = [
+                    'amount', 'amount_log', 
+                    'velocity_last_24h', 'velocity_last_24h_log', 
+                    'city_population', 'city_population_log'
+                ]
                 df = self.scaler.transform(df, columns_to_scale)
             else:
                 logger.warning("⚠ Scaler not loaded or fitted. Scaling skipped.")
-                
-            # 4. Drop unnecessary columns (like transaction_id)
-            if 'transaction_id' in df.columns:
-                df = df.drop(columns=['transaction_id'])
-                
-            # Drop target if present
-            if 'is_fraud' in df.columns:
-                df = df.drop(columns=['is_fraud'])
-                
-            # 5. Reorder features to match exact expectation of model
+
+            # 7. Order & Expected final feature set (29 columns)
             expected_order = [
-                'amount', 'transaction_hour', 'foreign_transaction', 'location_mismatch',
-                'velocity_last_24h', 'cardholder_age', 'device_trust_score_binned',
-                'merchant_category_Clothing', 'merchant_category_Electronics',
-                'merchant_category_Food', 'merchant_category_Grocery', 'merchant_category_Travel'
+                "day_of_week", "is_weekend", "location_mismatch", "velocity_last_24h", 
+                "foreign_transaction", "amount", "city_population", "amount_log", 
+                "velocity_last_24h_log", "city_population_log", "customer_age_binned", 
+                "transaction_hour_binned", "distance_to_merchant_binned", 
+                "merchant_category_entertainment", "merchant_category_food_dining", 
+                "merchant_category_gas_transport", "merchant_category_grocery_net", 
+                "merchant_category_grocery_pos", "merchant_category_health_fitness", 
+                "merchant_category_home", "merchant_category_kids_pets", 
+                "merchant_category_misc_net", "merchant_category_misc_pos", 
+                "merchant_category_personal_care", "merchant_category_shopping_net", 
+                "merchant_category_shopping_pos", "merchant_category_travel", 
+                "gender_F", "gender_M"
             ]
-            
-            # Fill missing columns with 0 if any encoding didn't generate them
-            for col in expected_order:
-                if col not in df.columns:
-                    df[col] = 0
-                    
+
             df = df[expected_order]
             logger.info(f"✓ Preprocessed shape: {df.shape}")
-            logger.info(f"Final features: {list(df.columns)}")
             logger.info(f"{'='*50}\n")
-            
             return df
+
         except Exception as e:
             logger.error(f"✗ Preprocessing failed: {str(e)}")
             raise

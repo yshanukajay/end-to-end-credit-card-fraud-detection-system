@@ -75,14 +75,14 @@ mlflow-ui:
 	@echo "Launching MLflow UI..."
 	@echo "MLflow UI will be available at: http://localhost:$(MLFLOW_PORT)"
 	@echo "Press Ctrl+C to stop the server"
-	mlflow ui --host 0.0.0.0 --port $(MLFLOW_PORT)
+	mlflow ui --host 127.0.0.1 --port $(MLFLOW_PORT)
 
 # Stop all running MLflow servers
 stop-all:
 	@echo "Stopping all MLflow servers..."
 ifeq ($(OS),Windows_NT)
 	@echo "Finding and stopping MLflow processes on port $(MLFLOW_PORT)..."
-	@powershell -Command "Get-NetTCPConnection -LocalPort $(MLFLOW_PORT) -ErrorAction SilentlyContinue | ForEach-Object { Stop-Process -Id $$_.OwningProcess -Force -ErrorAction SilentlyContinue }"
+	@powershell -Command "Stop-Process -Id (Get-NetTCPConnection -LocalPort $(MLFLOW_PORT) -ErrorAction SilentlyContinue).OwningProcess -Force -ErrorAction SilentlyContinue"
 else
 	@echo "Finding MLflow processes on port $(MLFLOW_PORT)..."
 	@-lsof -ti:$(MLFLOW_PORT) | xargs kill -9 2>/dev/null || true

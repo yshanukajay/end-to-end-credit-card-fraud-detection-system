@@ -123,11 +123,24 @@ class MLflowTracker:
             
             # Log the model
             artifact_path = self.config.get('artifact_path', 'model')
-            mlflow.sklearn.log_model(
-                sk_model=model,
-                artifact_path=artifact_path,
-                registered_model_name=self.config.get('model_registry_name', 'credit_card_fraud_prediction')
-            )
+            try:
+                import xgboost as xgb
+                is_xgb = isinstance(model, (xgb.XGBRegressor, xgb.XGBClassifier))
+            except ImportError:
+                is_xgb = False
+
+            if is_xgb:
+                mlflow.xgboost.log_model(
+                    xgb_model=model,
+                    artifact_path=artifact_path,
+                    registered_model_name=self.config.get('model_registry_name', 'credit_card_fraud_prediction')
+                )
+            else:
+                mlflow.sklearn.log_model(
+                    sk_model=model,
+                    artifact_path=artifact_path,
+                    registered_model_name=self.config.get('model_registry_name', 'credit_card_fraud_prediction')
+                )
             
             logger.info("Logged training metrics and model to MLflow")
             
