@@ -1,5 +1,8 @@
 .PHONY: all clean install train-pipeline data-pipeline streaming-inference run-all help mlflow-ui stop-all
 
+# Get the directory of this Makefile (always ends with a slash)
+ROOT_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+
 # Default Python interpreter
 PYTHON = python
 MLFLOW_PORT ?= 5001
@@ -23,34 +26,34 @@ help:
 install:
 	@echo "Installing project dependencies in the active conda environment..."
 	$(PYTHON) -m pip install --upgrade pip
-	$(PYTHON) -m pip install -r requirements.txt
+	$(PYTHON) -m pip install -r $(ROOT_DIR)requirements.txt
 	@echo "Installation completed successfully!"
 
 # Clean up
 clean:
 	@echo "Cleaning up artifacts..."
-	$(PYTHON) -c "import shutil; [shutil.rmtree(p, ignore_errors=True) for p in ['artifacts/models', 'artifacts/evaluation', 'artifacts/predictions', 'artifacts/encode', 'mlruns']]"
+	$(PYTHON) -c "import shutil, os; [shutil.rmtree(os.path.join('$(ROOT_DIR)', p), ignore_errors=True) for p in ['artifacts/models', 'artifacts/evaluation', 'artifacts/predictions', 'artifacts/encode', 'mlruns']]"
 	@echo "Cleanup completed!"
 
 # Run data pipeline
 data-pipeline:
 	@echo "Start running data pipeline..."
-	$(PYTHON) pipelines/data_pipeline.py
+	$(PYTHON) $(ROOT_DIR)pipelines/data_pipeline.py
 	@echo "Data pipeline completed successfully!"
 
 .PHONY: data-pipeline-rebuild
 data-pipeline-rebuild:
-	$(PYTHON) -c "from pipelines.data_pipeline import data_pipeline; data_pipeline(force_rebuild=True)"
+	$(PYTHON) -c "import sys; sys.path.insert(0, '$(ROOT_DIR)'); from pipelines.data_pipeline import data_pipeline; data_pipeline(force_rebuild=True)"
 
 # Run training pipeline
 train-pipeline:
 	@echo "Running training pipeline..."
-	$(PYTHON) pipelines/train_pipeline.py
+	$(PYTHON) $(ROOT_DIR)pipelines/train_pipeline.py
 
 # Run streaming inference pipeline with sample JSON
 streaming-inference:
 	@echo "Running streaming inference pipeline with sample JSON..."
-	$(PYTHON) pipelines/streaming_inference_pipeline.py
+	$(PYTHON) $(ROOT_DIR)pipelines/streaming_inference_pipeline.py
 
 # Run all pipelines in sequence
 run-all:
@@ -58,15 +61,15 @@ run-all:
 	@echo "========================================"
 	@echo "Step 1: Running data pipeline"
 	@echo "========================================"
-	$(PYTHON) pipelines/data_pipeline.py
+	$(PYTHON) $(ROOT_DIR)pipelines/data_pipeline.py
 	@echo "\n========================================"
 	@echo "Step 2: Running training pipeline"
 	@echo "========================================"
-	$(PYTHON) pipelines/train_pipeline.py
+	$(PYTHON) $(ROOT_DIR)pipelines/train_pipeline.py
 	@echo "\n========================================"
 	@echo "Step 3: Running streaming inference pipeline"
 	@echo "========================================"
-	$(PYTHON) pipelines/streaming_inference_pipeline.py
+	$(PYTHON) $(ROOT_DIR)pipelines/streaming_inference_pipeline.py
 	@echo "\n========================================"
 	@echo "All pipelines completed successfully!"
 	@echo "========================================"
@@ -75,7 +78,7 @@ mlflow-ui:
 	@echo "Launching MLflow UI..."
 	@echo "MLflow UI will be available at: http://localhost:$(MLFLOW_PORT)"
 	@echo "Press Ctrl+C to stop the server"
-	mlflow ui --host 127.0.0.1 --port $(MLFLOW_PORT)
+	mlflow ui --backend-store-uri sqlite:///$(ROOT_DIR)mlflow.db --default-artifact-root $(ROOT_DIR)mlruns --host 127.0.0.1 --port $(MLFLOW_PORT)
 
 # Stop all running MLflow servers
 stop-all:

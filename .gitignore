@@ -216,7 +216,7 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
-artifacts/*
+artifacts/
 logs/*
 mlruns/*
 mlflow.db

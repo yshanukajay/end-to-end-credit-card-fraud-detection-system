@@ -1,27 +1,25 @@
-import os
-import sys
 import json
-import yaml
-import time
+import logging
+import os
 import joblib
+import sys
+from typing import Any, Dict, List, Optional, Tuple, Union
+
 import numpy as np
 import pandas as pd
-from typing import Any, Dict, List, Optional, Tuple, Union
 from sklearn.base import BaseEstimator
+from sklearn.preprocessing import MinMaxScaler
+from pyspark.sql import SparkSession, DataFrame
+from pyspark.sql import functions as F
 
-# Resolve relative paths against project root so imports and config loading
-# work regardless of which working directory the script is launched from.
+# Resolve relative paths against project root
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, PROJECT_ROOT)
 
 from src.feature_binning import CustomBinningStrategy
 from src.feature_encoding import OrdinalEncodingStrategy
-from src.feature_scaling import StandardScalingStrategy
+from src.feature_scaling import StandardScalingStrategy, MinMaxScalingStrategy
 from utils.logger import get_logger
-
-# Retrieve logger configured with file and console handlers
-logger = get_logger(__name__)
-
 from utils.config import (
     get_config,
     get_model_config,
@@ -29,6 +27,9 @@ from utils.config import (
     get_encoding_config,
     get_scaling_config,
 )
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+logger = get_logger(__name__)
 
 
 def haversine_distance(lat1, lon1, lat2, lon2):
@@ -44,20 +45,31 @@ def haversine_distance(lat1, lon1, lat2, lon2):
 
 class ModelInference:
     """
-    Handles end-to-end model inference: input preprocessing, feature binning,
-    encoding, scaling, and predicting fraud probability using the trained model.
+    Enhanced model inference class supporting both pandas and PySpark preprocessing.
     """
-    def __init__(self, model_path: Optional[str] = None):
+    
+    def __init__(self, model_path: Optional[str] = None, use_spark: bool = False, spark: Optional[SparkSession] = None):
         """
         Initialize the model inference system.
+        
+        Args:
+            model_path: Path to the trained model file
+            use_spark: Whether to use PySpark for preprocessing
+            spark: Optional SparkSession instance
         """
         logger.info(f"\n{'='*60}")
         logger.info("INITIALIZING MODEL INFERENCE")
         logger.info(f"{'='*60}")
         
-        # Load config
         self.config = get_config()
+        self.use_spark = use_spark
         
+        if use_spark:
+            from utils.spark_session import get_or_create_spark_session
+            self.spark = spark or get_or_create_spark_session()
+        else:
+            self.spark = None
+            
         # Determine model path
         if model_path is None:
             model_cfg = get_model_config()
@@ -69,24 +81,35 @@ class ModelInference:
         self.model_path = model_path
         self.encoders = {}
         self.model = None
+        self.scaler = None
+        self.scaler_columns = []
         
         logger.info(f"Model Path: {self.model_path}")
+        logger.info(f"Processing Engine: {'PySpark' if use_spark else 'Pandas'}")
         
         try:
-            # Load model
+            # Load model and configurations
             self.load_model()
-            
-            # Load config sections
             self.binning_config = get_binning_config()
             self.encoding_config = get_encoding_config()
             self.scaling_config = get_scaling_config()
             
-            # Initialize and load standard scaler
-            self.scaler = StandardScalingStrategy()
+            # Load scaler if available
             scale_dir = os.path.join(PROJECT_ROOT, 'artifacts', 'scale')
-            scaler_loaded = self.scaler.load_scaler(scale_dir)
-            if not scaler_loaded:
-                logger.warning("⚠ Could not load scaler artifacts. Feature scaling will be skipped during inference.")
+            self.load_scaler(scale_dir)
+            
+            # Load thresholds metadata
+            metadata_path = self.model_path.replace('.pkl', '_metadata.json')
+            if os.path.exists(metadata_path):
+                with open(metadata_path, 'r') as f:
+                    self.metadata = json.load(f)
+                self.decision_threshold = self.metadata.get('decision_threshold', 0.5)
+                self.review_threshold = self.metadata.get('review_threshold', 0.2)
+                logger.info(f"✓ Loaded decision threshold: {self.decision_threshold:.4f}, review threshold: {self.review_threshold:.4f}")
+            else:
+                self.decision_threshold = 0.5
+                self.review_threshold = 0.2
+                logger.warning("⚠ Threshold metadata not found, using default 0.5 decision / 0.2 review thresholds")
             
             # Load categorical encoders
             encode_dir = os.path.join(PROJECT_ROOT, 'artifacts', 'encode')
@@ -101,56 +124,197 @@ class ModelInference:
 
     def load_model(self) -> None:
         """
-        Load the trained model from disk.
+        Load the trained model from disk with validation.
         """
         logger.info(f"Loading trained model from: {self.model_path}")
         if not os.path.exists(self.model_path):
             logger.error(f"✗ Model file not found: {self.model_path}")
             raise FileNotFoundError(f"Model file not found: {self.model_path}")
-            
+        
         try:
             self.model = joblib.load(self.model_path)
             file_size = os.path.getsize(self.model_path) / (1024**2)  # MB
-            logger.info("✓ Model loaded successfully:")
+            
+            logger.info(f"✓ Model loaded successfully:")
             logger.info(f"  • Model Type: {type(self.model).__name__}")
             logger.info(f"  • File Size: {file_size:.2f} MB")
+            
         except Exception as e:
             logger.error(f"✗ Failed to load model: {str(e)}")
             raise
 
     def load_encoders(self, encoders_dir: str) -> None:
         """
-        Load feature encoder configurations from directory.
+        Load feature encoders from directory with validation and logging.
         """
+        if not os.path.isabs(encoders_dir):
+            encoders_dir = os.path.abspath(os.path.join(PROJECT_ROOT, encoders_dir))
+            
         logger.info(f"Loading encoders from: {encoders_dir}")
         if not os.path.exists(encoders_dir):
             logger.warning(f"⚠ Encoders directory not found: {encoders_dir}. Using defaults.")
             return
-            
+        
         try:
             encoder_files = [f for f in os.listdir(encoders_dir) if f.endswith('_encoder.json')]
+            
+            if not encoder_files:
+                logger.warning("⚠ No encoder files found in directory")
+                return
+            
             for file in encoder_files:
                 feature_name = file.split('_encoder.json')[0]
                 file_path = os.path.join(encoders_dir, file)
+                
                 with open(file_path, 'r') as f:
                     encoder_data = json.load(f)
                     self.encoders[feature_name] = encoder_data
+                    
                 logger.info(f"  ✓ Loaded encoder for '{feature_name}'")
+            
         except Exception as e:
             logger.error(f"✗ Failed to load encoders: {str(e)}")
             raise
+    
+    def load_scaler(self, scaler_dir: str = 'artifacts/scale') -> None:
+        """
+        Load the fitted scaler for inference.
+        """
+        if not os.path.isabs(scaler_dir):
+            scaler_dir = os.path.abspath(os.path.join(PROJECT_ROOT, scaler_dir))
+            
+        logger.info(f"Loading scaler from: {scaler_dir}")
+        try:
+            metadata_path = os.path.join(scaler_dir, 'scaling_metadata.json')
+            
+            if not os.path.exists(metadata_path):
+                logger.warning("⚠ Scaler metadata not found - scaling will not be applied")
+                return
+            
+            with open(metadata_path, 'r') as f:
+                metadata = json.load(f)
+            
+            # For pandas/sklearn inference, create an sklearn scaler from metadata
+            if not self.use_spark:
+                if metadata.get('scaling_type') == 'standard':
+                    from sklearn.preprocessing import StandardScaler as SklearnStandardScaler
+                    self.scaler = SklearnStandardScaler()
+                    self.scaler.mean_ = np.array(metadata['mean'])
+                    self.scaler.scale_ = np.array(metadata['std'])
+                    self.scaler.var_ = self.scaler.scale_ ** 2
+                    self.scaler.n_features_in_ = metadata['n_features']
+                    self.scaler_columns = metadata['columns_to_scale']
+                    logger.info(f"✓ Loaded sklearn StandardScaler from PySpark metadata for columns: {self.scaler_columns}")
+                elif metadata.get('scaling_type') == 'minmax':
+                    self.scaler = MinMaxScaler()
+                    self.scaler.n_features_in_ = metadata['n_features']
+                    self.scaler.data_min_ = np.array(metadata['data_min'])
+                    self.scaler.data_max_ = np.array(metadata['data_max'])
+                    self.scaler.data_range_ = self.scaler.data_max_ - self.scaler.data_min_
+                    self.scaler.scale_ = 1.0 / self.scaler.data_range_
+                    self.scaler.min_ = -self.scaler.data_min_ * self.scaler.scale_
+                    self.scaler_columns = metadata['columns_to_scale']
+                    logger.info(f"✓ Loaded sklearn MinMaxScaler from PySpark metadata for columns: {self.scaler_columns}")
+            else:
+                # Load PySpark Scaler Strategy
+                if metadata.get('scaling_type') == 'standard':
+                    self.scaler = StandardScalingStrategy(spark=self.spark)
+                else:
+                    self.scaler = MinMaxScalingStrategy(spark=self.spark)
+                
+                self.scaler.load_scaler(scaler_dir)
+                self.scaler_columns = metadata['columns_to_scale']
+                logger.info(f"✓ Loaded PySpark Scaler for columns: {self.scaler_columns}")
+                
+        except Exception as e:
+            logger.warning(f"⚠ Failed to load scaler: {str(e)} - scaling will not be applied")
 
     def preprocess_input(self, data: Dict[str, Any]) -> pd.DataFrame:
         """
-        Preprocesses a raw input sample dict into the format expected by the model.
+        Preprocess input data for model prediction with comprehensive logging.
         """
-        logger.info(f"\n{'='*50}")
-        logger.info("PREPROCESSING INFERENCE INPUT")
-        logger.info(f"{'='*50}")
-        
-        if not data:
-            raise ValueError("Input data cannot be empty.")
+        if self.use_spark:
+            return self.preprocess_input_spark(data)
+        else:
+            return self.preprocess_input_pandas(data)
+
+    def preprocess_input_spark(self, data: Dict[str, Any]) -> pd.DataFrame:
+        """
+        Preprocess input data using PySpark.
+        """
+        logger.info("Preprocessing input data using PySpark...")
+        try:
+            spark_df = self.spark.createDataFrame([data])
             
+            # Map standard raw names if present
+            raw_rename = {
+                'amt': 'amount',
+                'category': 'merchant_category',
+                'city_pop': 'city_population',
+                'unix_time': 'transaction_unix_time'
+            }
+            for k, v in raw_rename.items():
+                if k in spark_df.columns:
+                    spark_df = spark_df.withColumnRenamed(k, v)
+            
+            # Preprocess features using spark_utils pipeline logic
+            from utils.spark_utils import preprocess_credit_card_data
+            spark_df_engineered = preprocess_credit_card_data(spark_df)
+            
+            # Apply scaling if available
+            if hasattr(self, 'scaler') and self.scaler is not None:
+                spark_df_engineered = self.scaler.transform(spark_df_engineered, self.scaler_columns)
+                
+            # One-hot encoding of categorical variables
+            # For category & gender, map index mappings saved by StringIndexer
+            for col, encoder_data in self.encoders.items():
+                if col in spark_df_engineered.columns:
+                    categories = encoder_data['categories']
+                    for category in categories:
+                        new_col_name = f"{col}_{category}"
+                        spark_df_engineered = spark_df_engineered.withColumn(
+                            new_col_name,
+                            F.when(F.col(col) == category, 1).otherwise(0)
+                        )
+                    spark_df_engineered = spark_df_engineered.drop(col)
+            
+            # Expected final features
+            expected_order = [
+                "day_of_week", "is_weekend", "location_mismatch", "velocity_last_24h", 
+                "foreign_transaction", "amount", "city_population", "amount_log", 
+                "velocity_last_24h_log", "city_population_log", "customer_age_binned", 
+                "transaction_hour_binned", "distance_to_merchant_binned", 
+                "merchant_category_entertainment", "merchant_category_food_dining", 
+                "merchant_category_gas_transport", "merchant_category_grocery_net", 
+                "merchant_category_grocery_pos", "merchant_category_health_fitness", 
+                "merchant_category_home", "merchant_category_kids_pets", 
+                "merchant_category_misc_net", "merchant_category_misc_pos", 
+                "merchant_category_personal_care", "merchant_category_shopping_net", 
+                "merchant_category_shopping_pos", "merchant_category_travel", 
+                "gender_F", "gender_M"
+            ]
+            
+            # Ensure all expected columns are present, fill with 0 if missing
+            for col in expected_order:
+                if col not in spark_df_engineered.columns:
+                    spark_df_engineered = spark_df_engineered.withColumn(col, F.lit(0))
+                    
+            spark_df_final = spark_df_engineered.select(expected_order)
+            
+            # Convert to Pandas
+            from utils.spark_utils import spark_to_pandas
+            pandas_df = spark_to_pandas(spark_df_final)
+            return pandas_df
+            
+        except Exception as e:
+            logger.error(f"✗ Spark preprocessing failed: {str(e)}")
+            raise
+
+    def preprocess_input_pandas(self, data: Dict[str, Any]) -> pd.DataFrame:
+        """
+        Preprocess input data using pandas (Standard/sklearn flow).
+        """
+        logger.info("Preprocessing input data using pandas...")
         try:
             df = pd.DataFrame([data])
             
@@ -207,7 +371,6 @@ class ModelInference:
             df['city_population_log'] = np.log1p(df['city_population'])
 
             # 4. Binning Mappings
-            # customer_age_binned
             age = df['customer_age'].iloc[0]
             if age <= 25:
                 df['customer_age_binned'] = 0
@@ -218,7 +381,6 @@ class ModelInference:
             else:
                 df['customer_age_binned'] = 3
 
-            # transaction_hour_binned
             hour = df['transaction_hour'].iloc[0]
             if hour >= 22 or hour <= 6:
                 df['transaction_hour_binned'] = 0
@@ -229,7 +391,6 @@ class ModelInference:
             else:
                 df['transaction_hour_binned'] = 3
 
-            # distance_to_merchant_binned
             dist = df['distance_to_merchant'].iloc[0]
             if dist <= 10:
                 df['distance_to_merchant_binned'] = 0
@@ -241,7 +402,6 @@ class ModelInference:
                 df['distance_to_merchant_binned'] = 3
 
             # 5. One-hot Nominals Encoding
-            # Merchant Category Encoding
             if 'merchant_category' not in df.columns:
                 df['merchant_category'] = 'travel'
             category_val = str(df['merchant_category'].iloc[0]).lower().strip().replace(' ', '_').replace('&', '_').replace('/', '_')
@@ -250,7 +410,6 @@ class ModelInference:
             for cat in categories:
                 df[f"merchant_category_{cat}"] = int(category_val == cat)
 
-            # Gender Encoding
             if 'gender' not in df.columns:
                 df['gender'] = 'F'
             gender_val = str(df['gender'].iloc[0]).upper().strip()
@@ -258,16 +417,16 @@ class ModelInference:
                 df[f"gender_{gen}"] = int(gender_val == gen)
 
             # 6. Feature Scaling
-            if hasattr(self, 'scaler') and self.scaler.fitted:
-                logger.info("Applying feature scaling...")
-                columns_to_scale = [
+            if hasattr(self, 'scaler') and self.scaler is not None:
+                cols = self.scaler_columns if hasattr(self, 'scaler_columns') and self.scaler_columns else [
                     'amount', 'amount_log', 
                     'velocity_last_24h', 'velocity_last_24h_log', 
                     'city_population', 'city_population_log'
                 ]
-                df = self.scaler.transform(df, columns_to_scale)
-            else:
-                logger.warning("⚠ Scaler not loaded or fitted. Scaling skipped.")
+                if hasattr(self.scaler, 'n_features_in_'):  # Sklearn Scaler loaded from metadata
+                    df[cols] = self.scaler.transform(df[cols])
+                else:  # Legacy Strategy class if loaded
+                    df = self.scaler.transform(df, cols)
 
             # 7. Order & Expected final feature set (29 columns)
             expected_order = [
@@ -287,13 +446,12 @@ class ModelInference:
 
             df = df[expected_order]
             logger.info(f"✓ Preprocessed shape: {df.shape}")
-            logger.info(f"{'='*50}\n")
             return df
-
+            
         except Exception as e:
-            logger.error(f"✗ Preprocessing failed: {str(e)}")
+            logger.error(f"✗ Pandas preprocessing failed: {str(e)}")
             raise
-
+    
     def predict(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """
         Predict fraud status and probability for an input data dict.
@@ -309,19 +467,38 @@ class ModelInference:
             # Preprocess the sample
             processed_data = self.preprocess_input(data)
             
-            # Predict
-            pred = self.model.predict(processed_data)[0]
+            # Align feature column order to match model's training schema
+            if hasattr(self.model, "feature_names_in_"):
+                processed_data = processed_data[list(self.model.feature_names_in_)]
             
             prob = 0.0
             if hasattr(self.model, "predict_proba"):
-                prob = self.model.predict_proba(processed_data)[0][1]
-                
-            status = 'Fraud' if pred == 1 else 'Legitimate'
-            confidence = round(prob * 100, 2) if pred == 1 else round((1 - prob) * 100, 2)
+                prob = float(self.model.predict_proba(processed_data)[0][1])
+            
+            # Apply tiered decision system:
+            # - auto-approve: prob < self.review_threshold
+            # - manual review: self.review_threshold <= prob < self.decision_threshold
+            # - auto-block: prob >= self.decision_threshold
+            if prob >= self.decision_threshold:
+                pred = 1
+                status = 'Fraud'
+                action = 'Auto-Block'
+                confidence = round(prob * 100, 2)
+            elif prob >= self.review_threshold:
+                pred = 1 # Flagged for review
+                status = 'Fraud'
+                action = 'Manual Review'
+                confidence = round(prob * 100, 2)
+            else:
+                pred = 0
+                status = 'Legitimate'
+                action = 'Auto-Approve'
+                confidence = round((1 - prob) * 100, 2)
             
             result = {
                 "Prediction": int(pred),
                 "Status": status,
+                "Action": action,
                 "Probability": float(prob),
                 "Confidence": f"{confidence}%"
             }

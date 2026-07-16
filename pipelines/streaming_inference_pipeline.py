@@ -57,8 +57,8 @@ class InferenceTracker:
                 'input_data': input_data,
                 'prediction': prediction_result,
                 'inference_time_ms': inference_time * 1000,
-                'fraud_probability': float(prediction_result['Confidence'].replace('%', '')) / 100,
-                'predicted_class': 1 if prediction_result['Status'] == 'Fraud' else 0
+                'fraud_probability': prediction_result.get('Probability', 0.0),
+                'predicted_class': 1 if prediction_result.get('Prediction', 0) == 1 else 0
             }
             
             self.predictions_batch.append(prediction_record)

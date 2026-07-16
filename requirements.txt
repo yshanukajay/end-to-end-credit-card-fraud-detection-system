@@ -118,3 +118,11 @@ groq>=0.11.0
 # - libgomp1 (OpenMP support required by XGBoost/LightGBM)
 # - libblas-dev (Required for BLAS implementation)
 # - liblapack-dev (Required for LAPACK implementation)
+
+# ------------------------------------------------------------------------------
+# Topic 14: PySpark and Big Data Processing
+# ------------------------------------------------------------------------------
+# PySpark: Spark's Python API, compatible with Python 3.10
+pyspark>=3.5.0
+# PyArrow: Required for Spark's Arrow-based optimizations
+pyarrow>=10.0.0

@@ -4,9 +4,10 @@ import pandas as pd
 import numpy as np
 from enum import Enum
 from abc import ABC, abstractmethod
-from typing import Tuple, List, Dict
+from typing import Tuple, List, Dict, Union, Any, Optional
 from sklearn.model_selection import train_test_split
 from imblearn.over_sampling import SMOTENC
+from pyspark.sql import DataFrame, SparkSession
 from utils.logger import get_logger
 
 # Retrieve logger configured with file and console handlers
@@ -18,7 +19,7 @@ class DataSplittingStrategy(ABC):
     Abstract Base Class for data splitting strategies.
     """
     @abstractmethod
-    def split_data(self, df: pd.DataFrame, target_column: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
+    def split_data(self, df: Union[pd.DataFrame, DataFrame], target_column: str) -> Tuple[Any, Any, Any, Any]:
         pass
 
 
@@ -30,49 +31,66 @@ class SplitType(str, Enum):
 class SimpleTrainTestSplitStrategy(DataSplittingStrategy):
     """
     Strategy to split data into train and test sets using simple random sampling.
+    Supports both pandas and PySpark DataFrames.
     """
-    def __init__(self, test_size: float = 0.2, random_state: int = 42):
+    def __init__(self, test_size: float = 0.2, random_state: int = 42, spark: Optional[SparkSession] = None):
         self.test_size = test_size
         self.random_state = random_state
+        self.spark = spark
         logger.info(f"SimpleTrainTestSplitStrategy initialized with test_size={test_size}")
 
-    def split_data(self, df: pd.DataFrame, target_column: str) -> Tuple[pd.DataFrame, pd.DataFrame, pd.Series, pd.Series]:
+    def split_data(self, df: Union[pd.DataFrame, DataFrame], target_column: str) -> Tuple[Any, Any, Any, Any]:
         logger.info(f"\n{'='*60}")
         logger.info("SIMPLE DATA SPLITTING")
         logger.info(f"{'='*60}")
-        logger.info(f"Starting simple data splitting with target column: '{target_column}'")
-        logger.info(f"Total samples: {len(df)}, Features: {len(df.columns) - 1}")
         
-        y = df[target_column]
-        X = df.drop(columns=[target_column])
-        
-        # Log target distribution
-        target_dist = y.value_counts()
-        logger.info("\nTarget Variable Distribution:")
-        for value, count in target_dist.items():
-            logger.info(f"  {value}: {count} ({count/len(y)*100:.2f}%)")
+        if isinstance(df, DataFrame):
+            logger.info("Splitting PySpark DataFrame...")
+            train_df, test_df = df.randomSplit([1.0 - self.test_size, self.test_size], seed=self.random_state)
             
-        # Perform simple split
-        X_train, X_test, y_train, y_test = train_test_split(
-            X, y, test_size=self.test_size, random_state=self.random_state
-        )
-        
-        # Log split results
-        logger.info("\nSplit Results:")
-        logger.info(f"  ✓ Training set: {len(X_train)} samples ({len(X_train)/len(df)*100:.1f}%)")
-        logger.info(f"  ✓ Test set: {len(X_test)} samples ({len(X_test)/len(df)*100:.1f}%)")
-        
-        train_dist = y_train.value_counts()
-        test_dist = y_test.value_counts()
-        logger.info("\nTarget Distribution in Training Set:")
-        for value, count in train_dist.items():
-            logger.info(f"  {value}: {count} ({count/len(y_train)*100:.2f}%)")
-        logger.info("\nTarget Distribution in Test Set:")
-        for value, count in test_dist.items():
-            logger.info(f"  {value}: {count} ({count/len(y_test)*100:.2f}%)")
+            y_train = train_df.select(target_column)
+            X_train = train_df.drop(target_column)
             
-        logger.info(f"{'='*60}\n")
-        return X_train, X_test, y_train, y_test
+            y_test = test_df.select(target_column)
+            X_test = test_df.drop(target_column)
+            
+            logger.info(f"✓ Split complete. Train rows: {train_df.count()}, Test rows: {test_df.count()}")
+            logger.info(f"{'='*60}\n")
+            return X_train, X_test, y_train, y_test
+        else:
+            logger.info(f"Starting simple data splitting with target column: '{target_column}'")
+            logger.info(f"Total samples: {len(df)}, Features: {len(df.columns) - 1}")
+            
+            y = df[target_column]
+            X = df.drop(columns=[target_column])
+            
+            # Log target distribution
+            target_dist = y.value_counts()
+            logger.info("\nTarget Variable Distribution:")
+            for value, count in target_dist.items():
+                logger.info(f"  {value}: {count} ({count/len(y)*100:.2f}%)")
+                
+            # Perform simple split
+            X_train, X_test, y_train, y_test = train_test_split(
+                X, y, test_size=self.test_size, random_state=self.random_state
+            )
+            
+            # Log split results
+            logger.info("\nSplit Results:")
+            logger.info(f"  ✓ Training set: {len(X_train)} samples ({len(X_train)/len(df)*100:.1f}%)")
+            logger.info(f"  ✓ Test set: {len(X_test)} samples ({len(X_test)/len(df)*100:.1f}%)")
+            
+            train_dist = y_train.value_counts()
+            test_dist = y_test.value_counts()
+            logger.info("\nTarget Distribution in Training Set:")
+            for value, count in train_dist.items():
+                logger.info(f"  {value}: {count} ({count/len(y_train)*100:.2f}%)")
+            logger.info("\nTarget Distribution in Test Set:")
+            for value, count in test_dist.items():
+                logger.info(f"  {value}: {count} ({count/len(y_test)*100:.2f}%)")
+                
+            logger.info(f"{'='*60}\n")
+            return X_train, X_test, y_train, y_test
 
 
 class StratifiedTrainTestSplitStrategy(DataSplittingStrategy):
