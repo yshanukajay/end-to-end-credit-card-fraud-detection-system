@@ -152,6 +152,49 @@ class StratifiedKFoldTrainingStrategy(ModelTrainingStrategy):
         return best_estimator, metrics
 
 
+class SparkTrainingStrategy(ModelTrainingStrategy):
+    """
+    Trains PySpark MLlib models on PySpark DataFrames.
+    """
+    def __init__(self, label_col: str = "is_fraud"):
+        self.label_col = label_col
+        logger.info(f"SparkTrainingStrategy initialized for label: '{label_col}'")
+
+    def train(
+        self,
+        model: Any,
+        X_train: Any,
+        y_train: Optional[Any] = None,
+    ) -> Tuple[Any, Dict[str, Any]]:
+        logger.info(f"\n{'='*60}")
+        logger.info("MODEL TRAINING - PYSPARK MLLIB PIPELINE")
+        logger.info(f"{'='*60}")
+        logger.info(f"  Pipeline Type: {type(model).__name__}")
+        logger.info(f"  Rows count   : {X_train.count()}")
+        
+        start = time.time()
+        # Train PySpark ML Pipeline
+        fitted_model = model.fit(X_train)
+        elapsed = time.time() - start
+        
+        # Calculate metric (Area under ROC) on training data
+        from pyspark.ml.evaluation import BinaryClassificationEvaluator
+        predictions = fitted_model.transform(X_train)
+        evaluator = BinaryClassificationEvaluator(labelCol=self.label_col, rawPredictionCol="rawPrediction", metricName="areaUnderROC")
+        auc = evaluator.evaluate(predictions)
+        
+        metrics = {
+            'train_auc': round(auc, 6),
+            'training_time_s': round(elapsed, 3),
+        }
+        
+        logger.info(f"  Training time : {elapsed:.2f}s")
+        logger.info(f"  Train AreaUnderROC : {auc:.4f}")
+        logger.info(f"{'='*60}\n")
+        
+        return fitted_model, metrics
+
+
 class ModelTrainer:
     """
     Orchestrates model training using a configurable training strategy,
@@ -172,10 +215,10 @@ class ModelTrainer:
 
     def train(
         self,
-        model: BaseEstimator,
-        X_train: Union[pd.DataFrame, np.ndarray],
-        y_train: Union[pd.Series, np.ndarray],
-    ) -> Tuple[BaseEstimator, Dict[str, Any]]:
+        model: Any,
+        X_train: Any,
+        y_train: Optional[Any] = None,
+    ) -> Tuple[Any, Dict[str, Any]]:
         """
         Delegate training to the chosen strategy.
 
@@ -185,12 +228,12 @@ class ModelTrainer:
         """
         return self.strategy.train(model, X_train, y_train)
 
-    def save_model(self, model: BaseEstimator, filepath: str) -> None:
+    def save_model(self, model: Any, filepath: str) -> None:
         """
-        Persist a fitted model to disk using joblib.
+        Persist a fitted model to disk. Support both PySpark Pipelines and scikit-learn models.
 
         Args:
-            model    : The trained sklearn-compatible estimator.
+            model    : The trained estimator or PipelineModel.
             filepath : Destination path (parent directories are created automatically).
 
         Raises:
@@ -209,6 +252,18 @@ class ModelTrainer:
         os.makedirs(parent, exist_ok=True)
 
         start = time.time()
+        # Check if the model is from PySpark
+        if type(model).__module__.startswith("pyspark.ml"):
+            logger.info("  Framework  : PySpark MLlib")
+            model.write().overwrite().save(filepath)
+            elapsed = time.time() - start
+            logger.info(f"  Model type : {type(model).__name__}")
+            logger.info(f"  Saved to   : {filepath} (Spark PipelineModel directory)")
+            logger.info(f"  Save time  : {elapsed:.2f}s")
+            logger.info(f"{'='*60}\n")
+            return
+
+        # Scikit-learn / XGBoost
         joblib.dump(model, filepath)
         elapsed = time.time() - start
         size_mb = os.path.getsize(filepath) / (1024 ** 2)
@@ -219,12 +274,13 @@ class ModelTrainer:
         logger.info(f"  Save time  : {elapsed:.2f}s")
         logger.info(f"{'='*60}\n")
 
-    def load_model(self, filepath: str) -> BaseEstimator:
+    def load_model(self, filepath: str, is_spark: bool = False) -> Any:
         """
         Load a previously saved model from disk.
 
         Args:
-            filepath : Path to the joblib-serialised model file.
+            filepath : Path to the model file/directory.
+            is_spark : Force loading as a PySpark PipelineModel.
 
         Returns:
             The deserialised estimator.
@@ -243,6 +299,25 @@ class ModelTrainer:
             raise FileNotFoundError(f"Model file not found: {filepath}")
 
         start = time.time()
+        
+        # Check if directory contains a Spark PipelineModel structure
+        is_spark_dir = os.path.isdir(filepath) and (
+            os.path.exists(os.path.join(filepath, "metadata")) or
+            os.path.exists(os.path.join(filepath, "stages"))
+        )
+        
+        if is_spark_dir or is_spark:
+            from pyspark.ml import PipelineModel
+            logger.info("  Framework  : PySpark MLlib")
+            model = PipelineModel.load(filepath)
+            elapsed = time.time() - start
+            logger.info(f"  Model type : {type(model).__name__}")
+            logger.info(f"  Loaded from: {filepath} (Spark PipelineModel directory)")
+            logger.info(f"  Load time  : {elapsed:.2f}s")
+            logger.info(f"{'='*60}\n")
+            return model
+
+        # Scikit-learn
         model = joblib.load(filepath)
         elapsed = time.time() - start
         size_mb = os.path.getsize(filepath) / (1024 ** 2)
@@ -299,19 +374,26 @@ def create_trainer_from_config(config_path: Optional[str] = None) -> ModelTraine
         with open(config_path, 'r') as f:
             config = yaml.safe_load(f)
             
-        training_cfg = config.get('training', {})
-        strategy_type = training_cfg.get('default_training_strategy', 'cv')
-        random_state = training_cfg.get('random_state', 42)
+        model_cfg = config.get('model', {})
+        framework = model_cfg.get('framework', 'scikit-learn')
         
-        if strategy_type == 'cv':
-            n_splits = training_cfg.get('cv_folds', 5)
-            strategy = StratifiedKFoldTrainingStrategy(
-                n_splits=n_splits,
-                scoring='f1',
-                random_state=random_state
-            )
+        if framework == 'pyspark':
+            target_col = config.get('columns', {}).get('target', 'is_fraud')
+            strategy = SparkTrainingStrategy(label_col=target_col)
         else:
-            strategy = SimpleTrainingStrategy()
+            training_cfg = config.get('training', {})
+            strategy_type = training_cfg.get('default_training_strategy', 'cv')
+            random_state = training_cfg.get('random_state', 42)
+            
+            if strategy_type == 'cv':
+                n_splits = training_cfg.get('cv_folds', 5)
+                strategy = StratifiedKFoldTrainingStrategy(
+                    n_splits=n_splits,
+                    scoring='f1',
+                    random_state=random_state
+                )
+            else:
+                strategy = SimpleTrainingStrategy()
             
         return ModelTrainer(strategy=strategy)
     except Exception as e:

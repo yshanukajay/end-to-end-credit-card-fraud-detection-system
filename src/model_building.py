@@ -6,6 +6,7 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.tree import DecisionTreeClassifier
 from xgboost import XGBClassifier
+from pyspark.ml import Pipeline
 from utils.logger import get_logger
 
 # Retrieve logger configured with file and console handlers
@@ -135,7 +136,6 @@ class XGBoostModelBuilder(BaseModelBuilder):
             'n_estimators': 100,
             'max_depth': 10,
             'random_state': 42,
-            'use_label_encoder': False,
             'eval_metric': 'logloss',
         }
         default_params.update(kwargs)
@@ -147,21 +147,70 @@ class XGBoostModelBuilder(BaseModelBuilder):
         return self.model
 
 
-def get_model_builder(model_type: str, **kwargs) -> BaseModelBuilder:
+class SparkModelBuilder(BaseModelBuilder):
     """
-    Factory function to retrieve a model builder by name.
+    Builder for PySpark MLlib classifiers wrapped in a Pipeline with a VectorAssembler stage.
+    """
+    def __init__(self, model_type: str, feature_cols: list, label_col: str = "is_fraud", **kwargs):
+        super().__init__(f"Spark_{model_type}", **kwargs)
+        self.spark_model_type = model_type.lower().replace(' ', '_').replace('-', '_')
+        self.feature_cols = feature_cols
+        self.label_col = label_col
+        logger.info(f"SparkModelBuilder initialized for type '{self.spark_model_type}' on {len(self.feature_cols)} features.")
+
+    def build_model(self) -> Pipeline:
+        from pyspark.ml.feature import VectorAssembler
+        from pyspark.ml.classification import GBTClassifier, RandomForestClassifier, LogisticRegression as SparkLogisticRegression
+        from pyspark.ml import Pipeline
+        
+        # 1. Vector assembler to group all input features into a single features vector
+        assembler = VectorAssembler(inputCols=self.feature_cols, outputCol="features")
+        
+        # 2. Select classifier based on type
+        if self.spark_model_type == 'gbt':
+            classifier = GBTClassifier(featuresCol="features", labelCol=self.label_col, **self.model_params)
+        elif self.spark_model_type == 'random_forest':
+            classifier = RandomForestClassifier(featuresCol="features", labelCol=self.label_col, **self.model_params)
+        elif self.spark_model_type in ['logistic_regression', 'lr']:
+            classifier = SparkLogisticRegression(featuresCol="features", labelCol=self.label_col, **self.model_params)
+        else:
+            raise ValueError(f"Unsupported Spark classifier type: '{self.spark_model_type}'")
+            
+        self.model = Pipeline(stages=[assembler, classifier])
+        logger.info(f"[{self.model_name}] Spark ML Pipeline built successfully.")
+        return self.model
+
+    def save_model(self, filepath: str) -> None:
+        if self.model is None:
+            raise ValueError(f"[{self.model_name}] No model to save. Call build_model() first.")
+        os.makedirs(os.path.dirname(os.path.abspath(filepath)), exist_ok=True)
+        # Pipeline or PipelineModel can be saved natively in Spark
+        self.model.write().overwrite().save(filepath)
+        logger.info(f"[{self.model_name}] Spark Model Pipeline saved to directory: {filepath}")
+
+    def load_model(self, filepath: str) -> None:
+        from pyspark.ml import PipelineModel
+        self.model = PipelineModel.load(filepath)
+        logger.info(f"[{self.model_name}] Spark Model Pipeline loaded from directory: {filepath}")
+
+
+def get_model_builder(model_type: str, framework: str = "scikit-learn", **kwargs) -> BaseModelBuilder:
+    """
+    Factory function to retrieve a model builder by name and framework.
 
     Args:
         model_type: One of 'logistic_regression', 'decision_tree',
-                    'random_forest', or 'xgboost'.
+                    'random_forest', or 'xgboost' (or spark equivalents).
+        framework:  'scikit-learn' or 'pyspark'.
         **kwargs:   Optional hyperparameter overrides forwarded to the builder.
-
-    Returns:
-        An instance of the appropriate BaseModelBuilder subclass.
-
-    Raises:
-        ValueError: If an unsupported model_type string is provided.
     """
+    if framework.lower() == "pyspark":
+        feature_cols = kwargs.pop("feature_cols", None)
+        label_col = kwargs.pop("label_col", "is_fraud")
+        if not feature_cols:
+            raise ValueError("feature_cols list is required to build a PySpark MLlib model pipeline.")
+        return SparkModelBuilder(model_type, feature_cols=feature_cols, label_col=label_col, **kwargs)
+
     registry = {
         'logistic_regression': LogisticRegressionModelBuilder,
         'decision_tree':       DecisionTreeModelBuilder,

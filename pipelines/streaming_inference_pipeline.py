@@ -8,15 +8,12 @@ import time
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, PROJECT_ROOT)
+
+from utils.logger import setup_logging
+setup_logging()
+logger = logging.getLogger(__name__)
 
 from src.model_inference import ModelInference
 from utils.config import get_model_config, get_inference_config

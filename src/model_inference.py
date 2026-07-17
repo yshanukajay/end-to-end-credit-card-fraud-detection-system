@@ -81,6 +81,7 @@ class ModelInference:
         self.model_path = model_path
         self.encoders = {}
         self.model = None
+        self.is_spark_model = False
         self.scaler = None
         self.scaler_columns = []
         
@@ -99,7 +100,11 @@ class ModelInference:
             self.load_scaler(scale_dir)
             
             # Load thresholds metadata
-            metadata_path = self.model_path.replace('.pkl', '_metadata.json')
+            if self.model_path.endswith('.pkl'):
+                metadata_path = self.model_path.replace('.pkl', '_metadata.json')
+            else:
+                metadata_path = self.model_path + "_metadata.json"
+                
             if os.path.exists(metadata_path):
                 with open(metadata_path, 'r') as f:
                     self.metadata = json.load(f)
@@ -132,12 +137,27 @@ class ModelInference:
             raise FileNotFoundError(f"Model file not found: {self.model_path}")
         
         try:
-            self.model = joblib.load(self.model_path)
-            file_size = os.path.getsize(self.model_path) / (1024**2)  # MB
+            # Check if self.model_path is a directory containing Spark PipelineModel elements
+            is_spark_dir = os.path.isdir(self.model_path) and (
+                os.path.exists(os.path.join(self.model_path, "metadata")) or
+                os.path.exists(os.path.join(self.model_path, "stages"))
+            )
             
-            logger.info(f"✓ Model loaded successfully:")
-            logger.info(f"  • Model Type: {type(self.model).__name__}")
-            logger.info(f"  • File Size: {file_size:.2f} MB")
+            if is_spark_dir:
+                from pyspark.ml import PipelineModel
+                from utils.spark_session import get_or_create_spark_session
+                self.spark = self.spark or get_or_create_spark_session()
+                self.model = PipelineModel.load(self.model_path)
+                self.is_spark_model = True
+                logger.info("✓ PySpark PipelineModel loaded successfully")
+            else:
+                self.model = joblib.load(self.model_path)
+                self.is_spark_model = False
+                file_size = os.path.getsize(self.model_path) / (1024**2)  # MB
+                
+                logger.info(f"✓ Model loaded successfully:")
+                logger.info(f"  • Model Type: {type(self.model).__name__}")
+                logger.info(f"  • File Size: {file_size:.2f} MB")
             
         except Exception as e:
             logger.error(f"✗ Failed to load model: {str(e)}")
@@ -467,13 +487,21 @@ class ModelInference:
             # Preprocess the sample
             processed_data = self.preprocess_input(data)
             
-            # Align feature column order to match model's training schema
-            if hasattr(self.model, "feature_names_in_"):
-                processed_data = processed_data[list(self.model.feature_names_in_)]
-            
-            prob = 0.0
-            if hasattr(self.model, "predict_proba"):
-                prob = float(self.model.predict_proba(processed_data)[0][1])
+            if getattr(self, "is_spark_model", False):
+                from utils.spark_session import get_or_create_spark_session
+                spark_sess = getattr(self, "spark", None) or get_or_create_spark_session()
+                spark_df = spark_sess.createDataFrame(processed_data)
+                predictions_df = self.model.transform(spark_df)
+                row = predictions_df.select("prediction", "probability").collect()[0]
+                prob = float(row["probability"][1])
+            else:
+                # Align feature column order to match model's training schema
+                if hasattr(self.model, "feature_names_in_"):
+                    processed_data = processed_data[list(self.model.feature_names_in_)]
+                
+                prob = 0.0
+                if hasattr(self.model, "predict_proba"):
+                    prob = float(self.model.predict_proba(processed_data)[0][1])
             
             # Apply tiered decision system:
             # - auto-approve: prob < self.review_threshold

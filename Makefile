@@ -1,7 +1,11 @@
-.PHONY: all clean install train-pipeline data-pipeline streaming-inference run-all help mlflow-ui stop-all
+.PHONY: all clean install train-pipeline data-pipeline streaming-inference run-all help mlflow-ui stop-all \
+         airflow-init airflow-webserver airflow-scheduler airflow-stop
 
 # Get the directory of this Makefile (always ends with a slash)
 ROOT_DIR := $(dir $(abspath $(lastword $(MAKEFILE_LIST))))
+
+# Airflow home directory setup locally
+export AIRFLOW_HOME := $(abspath $(ROOT_DIR)airflow)
 
 # Default Python interpreter
 PYTHON = python
@@ -21,6 +25,10 @@ help:
 	@echo "  make clean               - Clean up artifacts"
 	@echo "  make mlflow-ui           - Launch MLflow UI"
 	@echo "  make stop-all            - Stop running MLflow servers"
+	@echo "  make airflow-init        - Initialize local Airflow DB and create admin user"
+	@echo "  make airflow-webserver   - Start Airflow Webserver on port 8080"
+	@echo "  make airflow-scheduler   - Start Airflow Scheduler"
+	@echo "  make airflow-stop        - Stop running Airflow servers"
 
 # Install project dependencies in the active conda environment
 install:
@@ -93,4 +101,30 @@ else
 	@-ps aux | grep '[m]lflow ui' | awk '{print $$2}' | xargs kill -9 2>/dev/null || true
 	@-ps aux | grep '[g]unicorn.*mlflow' | awk '{print $$2}' | xargs kill -9 2>/dev/null || true
 endif
-	@echo "✅ All MLflow servers have been stopped"
+	@echo "✅ All MLflow servers have been stopped"
+
+# Initialize Airflow DB
+airflow-init:
+	@echo "Initializing Airflow database at $(AIRFLOW_HOME)..."
+	$(PYTHON) $(ROOT_DIR)utils/run_airflow.py db migrate
+
+# Start Airflow Webserver
+airflow-webserver:
+	@echo "Starting Airflow Webserver on port 8080..."
+	$(PYTHON) $(ROOT_DIR)utils/run_airflow.py webserver --port 8080
+
+# Start Airflow Scheduler
+airflow-scheduler:
+	@echo "Starting Airflow Scheduler..."
+	$(PYTHON) $(ROOT_DIR)utils/run_airflow.py scheduler
+
+# Stop all running Airflow processes
+airflow-stop:
+	@echo "Stopping all Airflow processes..."
+ifeq ($(OS),Windows_NT)
+	@powershell -Command "Get-CimInstance Win32_Process -Filter \"CommandLine Like '%airflow%'\" | ForEach-Object { Stop-Process -Id $$_.ProcessId -Force -ErrorAction SilentlyContinue }"
+	@powershell -Command "Stop-Process -Id (Get-NetTCPConnection -LocalPort 8080 -ErrorAction SilentlyContinue).OwningProcess -Force -ErrorAction SilentlyContinue"
+else
+	@-pkill -f "airflow" || true
+endif
+	@echo "✅ All Airflow processes stopped"

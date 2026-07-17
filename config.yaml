@@ -152,7 +152,9 @@ training:
     n_iter: 4
 
 model:
-  model_type: "xgboost"
+  framework: "scikit-learn"  # "scikit-learn" or "pyspark"
+  model_type: "xgboost"      # "xgboost" for scikit-learn
+  spark_model_type: "gbt"    # "gbt", "random_forest", or "logistic_regression" for pyspark
   training_strategy: "cv"
   data_path: "dataset/raw/fraudTrain.csv"
   model_path: "artifacts/models/xgboost_tuned_model.pkl"
@@ -163,6 +165,10 @@ model:
     learning_rate: 0.2
     random_state: 42
     scale_pos_weight: 75.0
+  spark_model_params:
+    maxDepth: 8
+    maxIter: 20
+    seed: 42
   model_types:
     xgboost:
       n_estimators: 100

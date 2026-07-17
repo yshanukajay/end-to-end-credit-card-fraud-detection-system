@@ -15,11 +15,8 @@ from pyspark.ml import Pipeline, PipelineModel
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 sys.path.insert(0, PROJECT_ROOT)
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
+from utils.logger import setup_logging
+setup_logging()
 logger = logging.getLogger(__name__)
 
 from utils.spark_session import create_spark_session, stop_spark_session

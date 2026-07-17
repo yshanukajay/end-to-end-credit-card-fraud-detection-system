@@ -19,13 +19,13 @@ from utils.spark_utils import spark_to_pandas
 
 from src.model_training import ModelTrainer, create_trainer_from_config
 from src.model_evaluation import ModelEvaluator
-from src.model_building import XGBoostModelBuilder as XGboostModelBuilder, RandomForestModelBuilder
-
+from src.model_building import XGBoostModelBuilder as XGboostModelBuilder, RandomForestModelBuilder, get_model_builder
 from utils.mlflow_utils import MLflowTracker, create_mlflow_run_tags
-from utils.config import get_model_config, get_data_paths
+from utils.config import get_model_config, get_data_paths, get_config
 import mlflow
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+import mlflow.spark
+from utils.logger import setup_logging
+setup_logging()
 logger = logging.getLogger(__name__)
 
 
@@ -88,158 +88,250 @@ def training_pipeline(
         
         processed_dir = os.path.join(PROJECT_ROOT, 'artifacts/data')
         
-        # ############### PYSPARK CODES (Preserved but inactive) ###########################
-        # logger.info(f"Loading training and test datasets (format: {data_format}) using PySpark...")
-        # if data_format == 'parquet':
-        #     # Load Parquet files with PySpark
-        #     X_train_spark = spark.read.parquet(f"{processed_dir}/X_train.parquet")
-        #     Y_train_spark = spark.read.parquet(f"{processed_dir}/Y_train.parquet")
-        #     X_test_spark = spark.read.parquet(f"{processed_dir}/X_test.parquet")
-        #     Y_test_spark = spark.read.parquet(f"{processed_dir}/Y_test.parquet")
-        # else:
-        #     # Load CSV files with PySpark (default)
-        #     X_train_spark = spark.read.option("header", "true").option("inferSchema", "true").csv(f"{processed_dir}/X_train.csv")
-        #     Y_train_spark = spark.read.option("header", "true").option("inferSchema", "true").csv(f"{processed_dir}/Y_train.csv")
-        #     X_test_spark = spark.read.option("header", "true").option("inferSchema", "true").csv(f"{processed_dir}/X_test.csv")
-        #     Y_test_spark = spark.read.option("header", "true").option("inferSchema", "true").csv(f"{processed_dir}/Y_test.csv")
-        # 
-        # logger.info(f"✓ Data loaded from {data_format.upper()} with PySpark:")
-        # logger.info(f"  • X_train: {X_train_spark.count()} rows, {len(X_train_spark.columns)} columns")
-        # logger.info(f"  • X_test: {X_test_spark.count()} rows, {len(X_test_spark.columns)} columns")
-        # logger.info(f"  • Y_train: {Y_train_spark.count()} rows, {len(Y_train_spark.columns)} columns")
-        # logger.info(f"  • Y_test: {Y_test_spark.count()} rows, {len(Y_test_spark.columns)} columns")
-        # 
-        # # Convert to pandas for model training (since sklearn/xgboost expects pandas/numpy)
-        # logger.info("Converting PySpark DataFrames to pandas for model training...")
-        # X_train = spark_to_pandas(X_train_spark)
-        # Y_train = spark_to_pandas(Y_train_spark)
-        # X_test = spark_to_pandas(X_test_spark)
-        # Y_test = spark_to_pandas(Y_test_spark)
+        config = get_config()
+        model_cfg = config.get('model', {})
+        framework = model_cfg.get('framework', 'scikit-learn')
+        spark_model_type = model_cfg.get('spark_model_type', 'gbt')
 
-        # ############### PANDAS / SKLEARN CODES (Active) ###########################
-        logger.info(f"Loading training and test datasets (format: {data_format}) using Pandas...")
-        if data_format == 'parquet':
-            X_train = pd.read_parquet(f"{processed_dir}/X_train.parquet")
-            Y_train = pd.read_parquet(f"{processed_dir}/Y_train.parquet")
-            X_test = pd.read_parquet(f"{processed_dir}/X_test.parquet")
-            Y_test = pd.read_parquet(f"{processed_dir}/Y_test.parquet")
-        else:
-            X_train = pd.read_csv(f"{processed_dir}/X_train.csv")
-            Y_train = pd.read_csv(f"{processed_dir}/Y_train.csv")
-            X_test = pd.read_csv(f"{processed_dir}/X_test.csv")
-            Y_test = pd.read_csv(f"{processed_dir}/Y_test.csv")
-        
-        # Ensure target column is not in feature sets
-        target_col = 'is_fraud'
-        if target_col in X_train.columns:
-            X_train = X_train.drop(columns=[target_col])
-        if target_col in X_test.columns:
-            X_test = X_test.drop(columns=[target_col])
+        if framework == 'pyspark':
+            logger.info(f"Loading training and test datasets (format: {data_format}) using PySpark...")
+            if data_format == 'parquet':
+                X_train_spark = spark.read.parquet(f"{processed_dir}/X_train.parquet")
+                Y_train_spark = spark.read.parquet(f"{processed_dir}/Y_train.parquet")
+                X_test_spark = spark.read.parquet(f"{processed_dir}/X_test.parquet")
+                Y_test_spark = spark.read.parquet(f"{processed_dir}/Y_test.parquet")
+            else:
+                X_train_spark = spark.read.option("header", "true").option("inferSchema", "true").csv(f"{processed_dir}/X_train.csv")
+                Y_train_spark = spark.read.option("header", "true").option("inferSchema", "true").csv(f"{processed_dir}/Y_train.csv")
+                X_test_spark = spark.read.option("header", "true").option("inferSchema", "true").csv(f"{processed_dir}/X_test.csv")
+                Y_test_spark = spark.read.option("header", "true").option("inferSchema", "true").csv(f"{processed_dir}/Y_test.csv")
+
+            # Recombine features and label for PySpark ML compatibility
+            from pyspark.sql.window import Window
+            from pyspark.sql.functions import row_number, lit
+            w = Window.orderBy(lit(1))
+            X_train_indexed = X_train_spark.withColumn("row_id", row_number().over(w))
+            Y_train_indexed = Y_train_spark.withColumn("row_id", row_number().over(w))
+            train_spark_full = X_train_indexed.join(Y_train_indexed, "row_id").drop("row_id")
             
-        y_train_s = Y_train.squeeze()
-        y_test_s = Y_test.squeeze()
-        
-        logger.info(f"✓ Converted to pandas - Training: {X_train.shape}, Test: {X_test.shape}")
-        
-        # Log dataset information
-        mlflow.log_metrics({
-            'train_samples': len(X_train),
-            'test_samples': len(X_test),
-            'num_features': X_train.shape[1],
-            'train_class_0': int((y_train_s == 0).sum()),
-            'train_class_1': int((y_train_s == 1).sum()),
-            'test_class_0': int((y_test_s == 0).sum()),
-            'test_class_1': int((y_test_s == 1).sum())
-        })
-        
-        # Log feature names
-        mlflow.log_param('feature_names', list(X_train.columns))
+            # Split train data into sub-train and validation sets for threshold tuning
+            train_spark_df, val_spark_df = train_spark_full.randomSplit([0.85, 0.15], seed=42)
+            
+            # Under-sample majority class to handle class imbalance
+            logger.info("Applying RandomUnderSampler (PySpark) to handle class imbalance (target ratio 1:20)...")
+            fraud_df = train_spark_df.filter(train_spark_df.is_fraud == 1)
+            legit_df = train_spark_df.filter(train_spark_df.is_fraud == 0)
+            
+            fraud_count = fraud_df.count()
+            legit_count = legit_df.count()
+            target_legit_count = fraud_count * 20
+            
+            if target_legit_count < legit_count:
+                fraction = target_legit_count / legit_count
+                sampled_legit_df = legit_df.sample(withReplacement=False, fraction=fraction, seed=42)
+                train_spark_resampled = fraud_df.union(sampled_legit_df)
+            else:
+                train_spark_resampled = train_spark_df
+                
+            logger.info(f"✓ Resampled training set size: {train_spark_resampled.count()} rows")
+            
+            num_train_samples = train_spark_full.count()
+            num_test_samples = X_test_spark.count()
+            feature_cols = [col for col in train_spark_resampled.columns if col not in ['is_fraud']]
+            num_features = len(feature_cols)
+            
+            mlflow.log_metrics({
+                'train_samples': num_train_samples,
+                'test_samples': num_test_samples,
+                'num_features': num_features
+            })
+            
+            # Mock structure to ensure metrics logging code below executes without modifications
+            class SparkMetadataMock:
+                def __init__(self, length, shape):
+                    self.length = length
+                    self.shape = shape
+                    self.columns = feature_cols
+                def __len__(self):
+                    return self.length
+            
+            X_train = SparkMetadataMock(num_train_samples, (num_train_samples, num_features))
+            X_test = SparkMetadataMock(num_test_samples, (num_test_samples, num_features))
+            y_train_s = None
+            y_test_s = None
+            
+            # Model building and training with timing
+            logger.info(f"\n{'='*80}")
+            logger.info(f"MODEL TRAINING STEP (PYSPARK)")
+            logger.info(f"{'='*80}")
+            import time
+            training_start_time = time.time()
+            
+            logger.info(f"Building PySpark MLlib model pipeline: '{spark_model_type}'")
+            spark_params = model_cfg.get('spark_model_params', {})
+            builder = get_model_builder(spark_model_type, framework="pyspark", feature_cols=feature_cols, label_col="is_fraud", **spark_params)
+            model = builder.build_model()
+            
+            trainer = create_trainer_from_config()
+            fitted_model, metrics = trainer.train(model, train_spark_resampled)
+            
+            training_end_time = time.time()
+            training_time = training_end_time - training_start_time
+            logger.info(f"✓ Model training completed in {training_time:.2f} seconds")
+            
+            # Save Spark PipelineModel
+            trainer.save_model(fitted_model, model_path)
+            logger.info(f"✓ Model saved to: {model_path}")
+            try:
+                mlflow.spark.log_model(fitted_model, "spark_model")
+                logger.info("✓ Logged Spark model to MLflow")
+            except Exception as me:
+                logger.warning(f"Failed to log Spark model to MLflow: {me}")
+            
+            # Tune threshold on validation set
+            logger.info("Tuning decision threshold on validation set...")
+            val_predictions = fitted_model.transform(val_spark_df)
+            val_probs_pdf = val_predictions.select("is_fraud", "probability").toPandas()
+            val_probs = np.array([float(p[1]) for p in val_probs_pdf["probability"]])
+            y_val = val_probs_pdf["is_fraud"].values
+            
+            # Prepare test predictions
+            X_test_indexed = X_test_spark.withColumn("row_id", row_number().over(w))
+            Y_test_indexed = Y_test_spark.withColumn("row_id", row_number().over(w))
+            test_spark_full = X_test_indexed.join(Y_test_indexed, "row_id").drop("row_id")
+            
+            logger.info("Evaluating model performance on test set using optimized threshold...")
+            test_predictions = fitted_model.transform(test_spark_full)
+            test_probs_pdf = test_predictions.select("is_fraud", "probability").toPandas()
+            test_probs = np.array([float(p[1]) for p in test_probs_pdf["probability"]])
+            y_test_s = test_probs_pdf["is_fraud"].values
+            
+            model = fitted_model
+        else:
+            # ############### PANDAS / SKLEARN CODES (Active) ###########################
+            logger.info(f"Loading training and test datasets (format: {data_format}) using Pandas...")
+            if data_format == 'parquet':
+                X_train = pd.read_parquet(f"{processed_dir}/X_train.parquet")
+                Y_train = pd.read_parquet(f"{processed_dir}/Y_train.parquet")
+                X_test = pd.read_parquet(f"{processed_dir}/X_test.parquet")
+                Y_test = pd.read_parquet(f"{processed_dir}/Y_test.parquet")
+            else:
+                X_train = pd.read_csv(f"{processed_dir}/X_train.csv")
+                Y_train = pd.read_csv(f"{processed_dir}/Y_train.csv")
+                X_test = pd.read_csv(f"{processed_dir}/X_test.csv")
+                Y_test = pd.read_csv(f"{processed_dir}/Y_test.csv")
+            
+            # Ensure target column is not in feature sets
+            target_col = 'is_fraud'
+            if target_col in X_train.columns:
+                X_train = X_train.drop(columns=[target_col])
+            if target_col in X_test.columns:
+                X_test = X_test.drop(columns=[target_col])
+                
+            y_train_s = Y_train.squeeze()
+            y_test_s = Y_test.squeeze()
+            
+            logger.info(f"✓ Converted to pandas - Training: {X_train.shape}, Test: {X_test.shape}")
+            
+            # Log dataset information
+            mlflow.log_metrics({
+                'train_samples': len(X_train),
+                'test_samples': len(X_test),
+                'num_features': X_train.shape[1],
+                'train_class_0': int((y_train_s == 0).sum()),
+                'train_class_1': int((y_train_s == 1).sum()),
+                'test_class_0': int((y_test_s == 0).sum()),
+                'test_class_1': int((y_test_s == 1).sum())
+            })
+            
+            # Log feature names
+            mlflow.log_param('feature_names', list(X_train.columns))
 
-        # Model building and training with timing
-        logger.info(f"\n{'='*80}")
-        logger.info(f"MODEL TRAINING STEP")
-        logger.info(f"{'='*80}")
-        logger.info("Splitting train data and applying resampling...")
-        import time
-        training_start_time = time.time()
-        
-        # Split train data into sub-train and validation sets for threshold tuning
-        from sklearn.model_selection import train_test_split
-        logger.info("Carving out 15% validation set from train split for threshold optimization...")
-        X_train_sub, X_val, y_train_sub, y_val = train_test_split(
-            X_train, y_train_s, test_size=0.15, random_state=42, stratify=y_train_s
-        )
-        
-        # Apply RandomUnderSampler to majority class to improve precision/recall balance and training speed
-        from imblearn.under_sampling import RandomUnderSampler
-        logger.info("Applying RandomUnderSampler to handle class imbalance (target ratio 1:20)...")
-        rus = RandomUnderSampler(sampling_strategy=0.05, random_state=42)
-        X_train_res, y_train_res = rus.fit_resample(X_train_sub, y_train_sub)
-        logger.info(f"✓ Resampled training set size: {X_train_res.shape[0]} rows (Legitimate: {(y_train_res == 0).sum()}, Fraud: {(y_train_res == 1).sum()})")
-        
-        # Perform hyperparameter search
-        from sklearn.model_selection import RandomizedSearchCV
-        from xgboost import XGBClassifier
-        
-        logger.info("Optimizing hyperparameters via RandomizedSearchCV...")
-        param_dist = {
-            'max_depth': [4, 6, 8],
-            'learning_rate': [0.05, 0.1, 0.2],
-            'min_child_weight': [1, 5, 10],
-            'gamma': [0.0, 0.1, 0.2],
-            'scale_pos_weight': [5.0, 10.0, 20.0]
-        }
-        
-        base_xgb = XGBClassifier(
-            n_estimators=100,
-            use_label_encoder=False,
-            eval_metric='logloss',
-            random_state=42
-        )
-        
-        search = RandomizedSearchCV(
-            estimator=base_xgb,
-            param_distributions=param_dist,
-            n_iter=5,
-            scoring='f1',
-            cv=3,
-            random_state=42,
-            n_jobs=-1
-        )
-        
-        search.fit(X_train_res, y_train_res)
-        best_params = search.best_params_
-        logger.info(f"✓ Best hyperparameters found: {best_params}")
-        
-        # Log best parameters to MLflow
-        mlflow.log_params({f"best_{k}": v for k, v in best_params.items()})
-        
-        # Build final model with best hyperparameters
-        model = XGBClassifier(
-            n_estimators=100,
-            use_label_encoder=False,
-            eval_metric='logloss',
-            random_state=42,
-            **best_params
-        )
-        model.fit(X_train_res, y_train_res)
-        
-        training_end_time = time.time()
-        training_time = training_end_time - training_start_time
-        logger.info(f"✓ Model training completed in {training_time:.2f} seconds")
-        
-        # Save model
-        trainer = create_trainer_from_config()
-        trainer.save_model(model, model_path)
-        logger.info(f"✓ Model saved to: {model_path}")
-        
-        # Log model to MLflow artifacts
-        mlflow.log_artifact(model_path, "trained_models")
-        
-        # Tune threshold on validation set targeting precision >= 70%
-        logger.info("Tuning decision threshold on validation set...")
-        val_probs = model.predict_proba(X_val)[:, 1]
-        
+            # Model building and training with timing
+            logger.info(f"\n{'='*80}")
+            logger.info(f"MODEL TRAINING STEP")
+            logger.info(f"{'='*80}")
+            logger.info("Splitting train data and applying resampling...")
+            import time
+            training_start_time = time.time()
+            
+            # Split train data into sub-train and validation sets for threshold tuning
+            from sklearn.model_selection import train_test_split
+            logger.info("Carving out 15% validation set from train split for threshold optimization...")
+            X_train_sub, X_val, y_train_sub, y_val = train_test_split(
+                X_train, y_train_s, test_size=0.15, random_state=42, stratify=y_train_s
+            )
+            
+            # Apply RandomUnderSampler to majority class to improve precision/recall balance and training speed
+            from imblearn.under_sampling import RandomUnderSampler
+            logger.info("Applying RandomUnderSampler to handle class imbalance (target ratio 1:20)...")
+            rus = RandomUnderSampler(sampling_strategy=0.05, random_state=42)
+            X_train_res, y_train_res = rus.fit_resample(X_train_sub, y_train_sub)
+            logger.info(f"✓ Resampled training set size: {X_train_res.shape[0]} rows (Legitimate: {(y_train_res == 0).sum()}, Fraud: {(y_train_res == 1).sum()})")
+            
+            # Perform hyperparameter search
+            from sklearn.model_selection import RandomizedSearchCV
+            from xgboost import XGBClassifier
+            
+            logger.info("Optimizing hyperparameters via RandomizedSearchCV...")
+            param_dist = {
+                'max_depth': [4, 6, 8],
+                'learning_rate': [0.05, 0.1, 0.2],
+                'min_child_weight': [1, 5, 10],
+                'gamma': [0.0, 0.1, 0.2],
+                'scale_pos_weight': [5.0, 10.0, 20.0]
+            }
+            
+            base_xgb = XGBClassifier(
+                n_estimators=100,
+                eval_metric='logloss',
+                random_state=42
+            )
+            
+            search = RandomizedSearchCV(
+                estimator=base_xgb,
+                param_distributions=param_dist,
+                n_iter=5,
+                scoring='f1',
+                cv=3,
+                random_state=42,
+                n_jobs=-1
+            )
+            
+            search.fit(X_train_res, y_train_res)
+            best_params = search.best_params_
+            logger.info(f"✓ Best hyperparameters found: {best_params}")
+            
+            # Log best parameters to MLflow
+            mlflow.log_params({f"best_{k}": v for k, v in best_params.items()})
+            
+            # Build final model with best hyperparameters
+            model = XGBClassifier(
+                n_estimators=100,
+                eval_metric='logloss',
+                random_state=42,
+                **best_params
+            )
+            model.fit(X_train_res, y_train_res)
+            
+            training_end_time = time.time()
+            training_time = training_end_time - training_start_time
+            logger.info(f"✓ Model training completed in {training_time:.2f} seconds")
+            
+            # Save model
+            trainer = create_trainer_from_config()
+            trainer.save_model(model, model_path)
+            logger.info(f"✓ Model saved to: {model_path}")
+            
+            # Log model to MLflow artifacts
+            mlflow.log_artifact(model_path, "trained_models")
+            
+            # Tune threshold on validation set targeting precision >= 70%
+            logger.info("Tuning decision threshold on validation set...")
+            val_probs = model.predict_proba(X_val)[:, 1]
+            
+            test_probs = model.predict_proba(X_test)[:, 1]
+            
         from sklearn.metrics import precision_recall_curve
         precisions, recalls, pr_thresholds = precision_recall_curve(y_val, val_probs)
         
@@ -284,7 +376,10 @@ def training_pipeline(
             'target_precision': target_precision,
             'timestamp': pd.Timestamp.now().isoformat()
         }
-        metadata_path = model_path.replace('.pkl', '_metadata.json')
+        if model_path.endswith('.pkl'):
+            metadata_path = model_path.replace('.pkl', '_metadata.json')
+        else:
+            metadata_path = model_path + "_metadata.json"
         with open(metadata_path, 'w') as f:
             json.dump(metadata, f, indent=2)
         logger.info(f"✓ Saved model threshold metadata to: {metadata_path}")
@@ -316,7 +411,8 @@ def training_pipeline(
         logger.info(f"{'='*80}")
         logger.info("Evaluating model performance on test set using optimized threshold...")
         
-        test_probs = model.predict_proba(X_test)[:, 1]
+        if framework != 'pyspark':
+            test_probs = model.predict_proba(X_test)[:, 1]
         y_pred_test = (test_probs >= best_threshold).astype(int)
         
         from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, confusion_matrix, roc_auc_score

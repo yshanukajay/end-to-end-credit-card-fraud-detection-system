@@ -125,4 +125,30 @@ groq>=0.11.0
 # PySpark: Spark's Python API, compatible with Python 3.10
 pyspark>=3.5.0
 # PyArrow: Required for Spark's Arrow-based optimizations
-pyarrow>=10.0.0
+pyarrow>=10.0.0
+
+# ------------------------------------------------------------------------------
+# Topic 15: Workflow Orchestration (Apache Airflow)
+# ------------------------------------------------------------------------------
+# Apache Airflow core: 2.7.0+ has full Python 3.11 support.
+# IMPORTANT: Airflow manages its own constraint files. Install with:
+#   pip install "apache-airflow==2.10.4" \
+#     --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.10.4/constraints-3.11.txt"
+apache-airflow>=2.7.0
+
+# Airflow provider for Apache Spark (submitting Spark jobs via Airflow)
+apache-airflow-providers-apache-spark>=4.1.5
+
+# Airflow HTTP provider (for triggering REST API endpoints, e.g. FastAPI prediction service)
+apache-airflow-providers-http>=4.7.0
+
+# Airflow standard provider (common operators: BashOperator, PythonOperator, etc.)
+# Bundled with core Airflow, listed here for explicit version tracking
+apache-airflow-providers-standard>=1.0.0
+
+# Airflow MLflow provider (log parameters, artifacts, and models to MLflow from DAGs)
+airflow-provider-mlflow>=0.1.0
+
+# Pendulum: Required by Airflow for timezone-aware datetime handling
+pendulum>=3.0.0,<4.0.0
+
