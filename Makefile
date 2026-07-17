@@ -25,8 +25,8 @@ help:
 	@echo "  make clean               - Clean up artifacts"
 	@echo "  make mlflow-ui           - Launch MLflow UI"
 	@echo "  make stop-all            - Stop running MLflow servers"
-	@echo "  make airflow-init        - Initialize local Airflow DB and create admin user"
-	@echo "  make airflow-webserver   - Start Airflow Webserver on port 8080"
+	@echo "  make airflow-init        - Initialize local Airflow DB"
+	@echo "  make airflow-webserver   - Start Airflow Webserver/API Server on port 8080"
 	@echo "  make airflow-scheduler   - Start Airflow Scheduler"
 	@echo "  make airflow-stop        - Stop running Airflow servers"
 
@@ -108,10 +108,10 @@ airflow-init:
 	@echo "Initializing Airflow database at $(AIRFLOW_HOME)..."
 	$(PYTHON) $(ROOT_DIR)utils/run_airflow.py db migrate
 
-# Start Airflow Webserver
+# Start Airflow Webserver/API Server
 airflow-webserver:
-	@echo "Starting Airflow Webserver on port 8080..."
-	$(PYTHON) $(ROOT_DIR)utils/run_airflow.py webserver --port 8080
+	@echo "Starting Airflow API Server on port 8080..."
+	$(PYTHON) $(ROOT_DIR)utils/run_airflow.py api-server --port 8080
 
 # Start Airflow Scheduler
 airflow-scheduler:

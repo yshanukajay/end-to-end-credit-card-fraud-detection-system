@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 if not hasattr(os, 'register_at_fork'):
     os.register_at_fork = lambda *args, **kwargs: None
 
-# 4. Mock fcntl module (missing on Windows)
+# 4. Mock fcntl, pwd, and resource modules (missing on Windows)
 from unittest.mock import MagicMock
 fcntl_mock = MagicMock()
 fcntl_mock.LOCK_SH = 1
@@ -26,8 +26,39 @@ fcntl_mock.LOCK_NB = 4
 fcntl_mock.LOCK_UN = 8
 fcntl_mock.flock = lambda fd, op: None
 sys.modules['fcntl'] = fcntl_mock
+sys.modules['pwd'] = MagicMock()
+resource_mock = MagicMock()
+resource_mock.RLIMIT_NOFILE = 7
+resource_mock.getrlimit = lambda x: (1024, 1024)
+sys.modules['resource'] = resource_mock
 
-# 5. Run Airflow entrypoint
+# 5. Mock Unix-specific signals on Windows
+import signal
+if not hasattr(signal, 'SIGQUIT'):
+    signal.SIGQUIT = 3
+
+_original_signal = signal.signal
+def _mocked_signal(sig, handler):
+    try:
+        return _original_signal(sig, handler)
+    except ValueError:
+        # Ignore signal registration failures on Windows (e.g. SIGQUIT)
+        return None
+
+signal.signal = _mocked_signal
+
+# 6. Monkeypatch Pydantic FieldInfo._copy (removed in Pydantic 2.10+)
+import copy
+from pydantic.fields import FieldInfo
+if not hasattr(FieldInfo, '_copy'):
+    def _copy_field_info(self, **kwargs):
+        c = copy.copy(self)
+        for k, v in kwargs.items():
+            setattr(c, k, v)
+        return c
+    FieldInfo._copy = _copy_field_info
+
+# 7. Run Airflow entrypoint
 from airflow.__main__ import main
 
 if __name__ == '__main__':
