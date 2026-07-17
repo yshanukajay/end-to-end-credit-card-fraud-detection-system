@@ -226,3 +226,10 @@ pipeline:
   deployment_pipeline_name: "model_deployment_pipeline"
   inference_pipeline_name: "inference_pipeline"
   enable_cache: false
+
+kafka:
+  bootstrap_servers: "localhost:9092"
+  topics:
+    raw_transactions: "raw_transactions"
+    fraud_predictions: "fraud_predictions"
+  consumer_group: "fraud_detection_group"

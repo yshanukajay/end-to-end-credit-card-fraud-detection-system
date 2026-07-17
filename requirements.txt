@@ -125,6 +125,7 @@ groq>=0.11.0
 # PySpark: Spark's Python API, compatible with Python 3.10
 pyspark>=3.5.0,<4.0.0
 # PyArrow: Required for Spark's Arrow-based optimizations
+# PyArrow: Required for Spark's Arrow-based optimizations
 pyarrow>=10.0.0
 
 # ------------------------------------------------------------------------------
@@ -152,3 +153,13 @@ airflow-provider-mlflow>=0.1.0
 # Pendulum: Required by Airflow for timezone-aware datetime handling
 pendulum>=3.0.0,<4.0.0
 
+# ------------------------------------------------------------------------------
+# Topic 16: Message Brokering and Streaming (Apache Kafka)
+# ------------------------------------------------------------------------------
+# Confluent Kafka: Python client for Apache Kafka.
+# Pinned to 2.6.1 for compatibility with Airflow 2.10.4 constraints on Python 3.11.
+confluent-kafka==2.6.1
+
+# Airflow provider for Apache Kafka (managing Kafka topic creation, consumer/producer tasks in DAGs)
+# Pinned to 1.6.1 for compatibility with Airflow 2.10.4 constraints on Python 3.11.
+apache-airflow-providers-apache-kafka==1.6.1
