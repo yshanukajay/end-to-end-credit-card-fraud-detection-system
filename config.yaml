@@ -128,7 +128,7 @@ feature_encoding:
 
 feature_scaling:
   scaling_type: "standard"
-  columns_to_scale: ["amount", "customer_age", "distance_to_merchant", "city_population"]
+  columns_to_scale: ["amount_log", "velocity_last_24h_log", "city_population_log"]
 
 data_splitting:
   split_type: "stratified"

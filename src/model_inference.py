@@ -419,9 +419,9 @@ class ModelInference:
             # 6. Feature Scaling
             if hasattr(self, 'scaler') and self.scaler is not None:
                 cols = self.scaler_columns if hasattr(self, 'scaler_columns') and self.scaler_columns else [
-                    'amount', 'amount_log', 
-                    'velocity_last_24h', 'velocity_last_24h_log', 
-                    'city_population', 'city_population_log'
+                    'amount_log', 
+                    'velocity_last_24h_log', 
+                    'city_population_log'
                 ]
                 if hasattr(self.scaler, 'n_features_in_'):  # Sklearn Scaler loaded from metadata
                     df[cols] = self.scaler.transform(df[cols])

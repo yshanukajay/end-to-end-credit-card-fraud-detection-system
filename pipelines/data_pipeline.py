@@ -381,9 +381,9 @@ def data_pipeline(
         # Save metadata about the preprocessing
         preprocessing_metadata = {
             'scaling_columns': scaling_config.get('columns_to_scale', [
-                'amount', 'amount_log', 
-                'velocity_last_24h', 'velocity_last_24h_log', 
-                'city_population', 'city_population_log'
+                'amount_log', 
+                'velocity_last_24h_log', 
+                'city_population_log'
             ]),
             'encoding_columns': encoding_config.get('nominal_columns', ["merchant_category", "gender"]),
             'ordinal_mappings': encoding_config.get('ordinal_mappings', {}),

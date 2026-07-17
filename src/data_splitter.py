@@ -218,9 +218,9 @@ def create_default_resampled_splitter() -> SplitAndResampleStrategy:
     """
     splitter = StratifiedTrainTestSplitStrategy(test_size=0.2, random_state=42)
     continuous_cols = [
-        'amount', 'amount_log', 
-        'velocity_last_24h', 'velocity_last_24h_log', 
-        'city_population', 'city_population_log'
+        'amount_log', 
+        'velocity_last_24h_log', 
+        'city_population_log'
     ]
     oversampler = SMOTENCOversampler(continuous_cols=continuous_cols, sampling_strategy=0.1, random_state=42)
     return SplitAndResampleStrategy(splitter=splitter, oversampler=oversampler)

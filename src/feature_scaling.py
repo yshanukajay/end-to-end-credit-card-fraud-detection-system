@@ -493,11 +493,17 @@ class StandardScalingStrategy(FeatureScalingStrategy):
             return False
             
         if columns_to_scale is None:
-            columns_to_scale = [
-                'amount', 'amount_log', 
-                'velocity_last_24h', 'velocity_last_24h_log', 
-                'city_population', 'city_population_log'
-            ]
+            try:
+                from utils.config import get_scaling_config
+                scaling_cfg = get_scaling_config()
+                columns_to_scale = scaling_cfg.get('columns_to_scale', [
+                    'amount_log', 'velocity_last_24h_log', 'city_population_log'
+                ])
+            except Exception as e:
+                logger.warning(f"Failed to load scaling configuration, using default: {e}")
+                columns_to_scale = [
+                    'amount_log', 'velocity_last_24h_log', 'city_population_log'
+                ]
             
         try:
             spark = get_or_create_spark_session()
@@ -542,16 +548,22 @@ class FeatureScalingPipeline:
 
 def create_default_scaling_pipeline(spark: Optional[SparkSession] = None) -> FeatureScalingPipeline:
     """
-    Creates a pre-configured pipeline matching the strategy used in the Jupyter Notebook:
-    - Z-score StandardScaler scaling of columns: ['amount', 'amount_log', 'velocity_last_24h', 'velocity_last_24h_log', 'city_population', 'city_population_log']
+    Creates a pre-configured pipeline matching the strategy:
+    - Z-score StandardScaler scaling of columns loaded from configuration.
     """
     spark_sess = spark or get_or_create_spark_session()
     
-    columns = [
-        'amount', 'amount_log', 
-        'velocity_last_24h', 'velocity_last_24h_log', 
-        'city_population', 'city_population_log'
-    ]
+    try:
+        from utils.config import get_scaling_config
+        scaling_cfg = get_scaling_config()
+        columns = scaling_cfg.get('columns_to_scale', [
+            'amount_log', 'velocity_last_24h_log', 'city_population_log'
+        ])
+    except Exception as e:
+        logger.warning(f"Failed to load scaling configuration, using default: {e}")
+        columns = [
+            'amount_log', 'velocity_last_24h_log', 'city_population_log'
+        ]
     return FeatureScalingPipeline(
         strategy=StandardScalingStrategy(spark=spark_sess),
         columns_to_scale=columns

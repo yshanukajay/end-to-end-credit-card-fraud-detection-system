@@ -1,8 +1,3 @@
-"""
-Feature binning strategies for both pandas and PySpark DataFrames.
-Students can compare custom binning implementations and learn PySpark's Bucketizer.
-"""
-
 import logging
 from abc import ABC, abstractmethod
 from typing import Dict, List, Optional, Union, Tuple
@@ -57,6 +52,7 @@ class CustomBinningStrategy(FeatureBinningStrategy):
     #     logger.info(f"FEATURE BINNING - {column.upper()}")
     #     logger.info(f"{'='*60}")
     #     logger.info(f"Starting binning for column: {column}")
+    
     #     initial_unique = df[column].nunique()
     #     value_range = (df[column].min(), df[column].max())
     #     logger.info(f"  Unique values: {initial_unique}, Range: [{value_range[0]:.2f}, {value_range[1]:.2f}]")
