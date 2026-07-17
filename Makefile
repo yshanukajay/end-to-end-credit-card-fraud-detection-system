@@ -10,6 +10,7 @@ export AIRFLOW_HOME := $(abspath $(ROOT_DIR)airflow)
 # Default Python interpreter
 PYTHON = python
 MLFLOW_PORT ?= 5001
+AIRFLOW_CONSTRAINT = https://raw.githubusercontent.com/apache/airflow/constraints-2.10.4/constraints-3.11.txt
 
 # Default target
 all: help
@@ -26,7 +27,7 @@ help:
 	@echo "  make mlflow-ui           - Launch MLflow UI"
 	@echo "  make stop-all            - Stop running MLflow servers"
 	@echo "  make airflow-init        - Initialize local Airflow DB"
-	@echo "  make airflow-webserver   - Start Airflow Webserver/API Server on port 8080"
+	@echo "  make airflow-webserver   - Start Airflow Webserver on port 8080"
 	@echo "  make airflow-scheduler   - Start Airflow Scheduler"
 	@echo "  make airflow-stop        - Stop running Airflow servers"
 
@@ -34,7 +35,7 @@ help:
 install:
 	@echo "Installing project dependencies in the active conda environment..."
 	$(PYTHON) -m pip install --upgrade pip
-	$(PYTHON) -m pip install -r $(ROOT_DIR)requirements.txt
+	$(PYTHON) -m pip install -r $(ROOT_DIR)requirements.txt --constraint $(AIRFLOW_CONSTRAINT)
 	@echo "Installation completed successfully!"
 
 # Clean up
@@ -108,10 +109,10 @@ airflow-init:
 	@echo "Initializing Airflow database at $(AIRFLOW_HOME)..."
 	$(PYTHON) $(ROOT_DIR)utils/run_airflow.py db migrate
 
-# Start Airflow Webserver/API Server
+# Start Airflow Webserver
 airflow-webserver:
-	@echo "Starting Airflow API Server on port 8080..."
-	$(PYTHON) $(ROOT_DIR)utils/run_airflow.py api-server --port 8080
+	@echo "Starting Airflow Webserver on port 8080..."
+	$(PYTHON) $(ROOT_DIR)utils/run_airflow.py webserver --port 8080
 
 # Start Airflow Scheduler
 airflow-scheduler:
@@ -127,4 +128,4 @@ ifeq ($(OS),Windows_NT)
 else
 	@-pkill -f "airflow" || true
 endif
-	@echo "✅ All Airflow processes stopped"
+	@echo "✅ All Airflow processes stopped"

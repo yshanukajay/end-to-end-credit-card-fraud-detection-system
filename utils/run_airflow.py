@@ -34,15 +34,22 @@ sys.modules['resource'] = resource_mock
 
 # 5. Mock Unix-specific signals on Windows
 import signal
-if not hasattr(signal, 'SIGQUIT'):
-    signal.SIGQUIT = 3
+# Airflow's scheduler registers these POSIX-only signals.  Define placeholders
+# on Windows; _mocked_signal below safely ignores their registration.
+for _name, _value in {
+    'SIGQUIT': 3,
+    'SIGUSR1': 10,
+    'SIGUSR2': 12,
+}.items():
+    if not hasattr(signal, _name):
+        setattr(signal, _name, _value)
 
 _original_signal = signal.signal
 def _mocked_signal(sig, handler):
     try:
         return _original_signal(sig, handler)
-    except ValueError:
-        # Ignore signal registration failures on Windows (e.g. SIGQUIT)
+    except (ValueError, OSError):
+        # Ignore POSIX-only signal registrations on Windows.
         return None
 
 signal.signal = _mocked_signal
