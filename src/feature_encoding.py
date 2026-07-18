@@ -139,6 +139,16 @@ class NominalEncodingStrategy(FeatureEncodingStrategy):
                     'mappings': encoder_dict
                 }, f, indent=2)
             
+            # Upload to S3 if S3 I/O is enabled
+            try:
+                from utils.config import force_s3_io
+                if force_s3_io():
+                    from utils.s3_io import upload_file
+                    s3_key = f"artifacts/encode/{column}_encoder.json"
+                    upload_file(encoder_path, key=s3_key)
+            except Exception as se:
+                logger.warning(f"⚠️ Failed to upload encoder mapping for '{column}' to S3: {se}")
+
             logger.info(f"✓ One-hot encoded '{column}': {len(labels)} categories → {len(labels)} binary columns")
             
             # Extract one-hot encoded values to separate columns

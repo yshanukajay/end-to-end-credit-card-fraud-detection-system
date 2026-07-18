@@ -6,7 +6,8 @@ SHELL := /usr/bin/env bash
          kafka-producer-stream kafka-producer-batch kafka-consumer kafka-consumer-continuous \
          kafka-check kafka-monitor kafka-sample-scored kafka-reset kafka-help \
          airflow-init airflow-start airflow-kill airflow-reset \
-         docker-build docker-up docker-down docker-data-pipeline docker-model-pipeline docker-inference-pipeline docker-run-all docker-status
+         docker-build docker-up docker-down docker-data-pipeline docker-model-pipeline docker-inference-pipeline docker-run-all docker-status \
+         s3-upload-data s3-list s3-clean s3-delete-prefix s3-smoke
 
 # Default Python interpreter
 PYTHON = python
@@ -116,6 +117,13 @@ help:
 	@echo "  make docker-inference-pipeline - Run inference pipeline in Docker"
 	@echo "  make docker-run-all      - Run all pipelines in Docker"
 	@echo "  make docker-status       - Show Docker service status"
+	@echo ""
+	@echo "🌐 S3 Commands:"
+	@echo "  make s3-upload-data              - Upload data/raw & data/processed to S3 (one-time)"
+	@echo "  make s3-list PREFIX=<prefix>     - List S3 keys with prefix"
+	@echo "  make s3-clean                    - Clean project S3 artifacts (safe)"
+	@echo "  make s3-delete-prefix PREFIX=<>  - Delete S3 keys with prefix (careful!)"
+	@echo "  make s3-smoke                    - Test S3 connectivity"
 	@echo ""
 	@echo "💡 Quick Start (Batch Processing):"
 	@echo "  1. make install && make setup-dirs"
@@ -491,3 +499,22 @@ docker-run-all:
 docker-status:
 	@echo "🐳 Showing Docker service status..."
 	docker compose ps
+
+# ========================================================================================
+# S3 ORCHESTRATION COMMANDS
+# ========================================================================================
+
+s3-upload-data:
+	@python -c "import os, sys, subprocess; [os.environ.update({l.split('=', 1)[0].strip(): l.split('=', 1)[1].strip()}) for l in open('.env') if '=' in l and not l.startswith('#')] if os.path.exists('.env') else None; [os.environ.pop(e) for e in ['AWS_SHARED_CREDENTIALS_FILE', 'AWS_CONFIG_FILE'] if e in os.environ and not os.path.exists(os.environ[e])]; print('[INFO] Uploading raw data to S3...'); raw_file = 'dataset/raw/fraudTrain.csv'; subprocess.run([sys.executable, 'scripts/upload_to_s3.py', '--file', raw_file]) if os.path.exists(raw_file) else print('[WARNING] Raw file not found: ' + raw_file); print('[INFO] Uploading processed data artifacts to S3...'); path = 'artifacts/data'; [subprocess.run([sys.executable, 'scripts/upload_to_s3.py', '--file', os.path.join(path, f)]) for f in os.listdir(path) if f.endswith('.parquet') or f.endswith('.csv')] if os.path.exists(path) else None"
+
+s3-list:
+	@python -c "import os, sys, boto3; [os.environ.update({l.split('=', 1)[0].strip(): l.split('=', 1)[1].strip()}) for l in open('.env') if '=' in l and not l.startswith('#')] if os.path.exists('.env') else None; [os.environ.pop(e) for e in ['AWS_SHARED_CREDENTIALS_FILE', 'AWS_CONFIG_FILE'] if e in os.environ and not os.path.exists(os.environ[e])]; bucket = os.getenv('S3_BUCKET'); prefix = '$(PREFIX)'; res = boto3.client('s3').list_objects_v2(Bucket=bucket, Prefix=prefix); print(f'Objects in s3://{bucket}/{prefix}:'); [print(f\"  - {obj['Key']} ({obj['Size'] / (1024*1024):.2f} MB)\") for obj in res.get('Contents', [])]"
+
+s3-clean:
+	@python -c "import os, sys, boto3; [os.environ.update({l.split('=', 1)[0].strip(): l.split('=', 1)[1].strip()}) for l in open('.env') if '=' in l and not l.startswith('#')] if os.path.exists('.env') else None; [os.environ.pop(e) for e in ['AWS_SHARED_CREDENTIALS_FILE', 'AWS_CONFIG_FILE'] if e in os.environ and not os.path.exists(os.environ[e])]; bucket = os.getenv('S3_BUCKET'); b = boto3.resource('s3').Bucket(bucket); [print(f'[INFO] Deleting s3://{bucket}/{k}...') or b.objects.filter(Prefix=k).delete() for k in ['predictions/', 'mlflow-artifacts/']]"
+
+s3-delete-prefix:
+	@python -c "import os, sys, boto3; [os.environ.update({l.split('=', 1)[0].strip(): l.split('=', 1)[1].strip()}) for l in open('.env') if '=' in l and not l.startswith('#')] if os.path.exists('.env') else None; [os.environ.pop(e) for e in ['AWS_SHARED_CREDENTIALS_FILE', 'AWS_CONFIG_FILE'] if e in os.environ and not os.path.exists(os.environ[e])]; prefix = '$(PREFIX)'; (print('[ERROR] PREFIX is required. Usage: make s3-delete-prefix PREFIX=my-prefix') or sys.exit(1)) if not prefix else None; bucket = os.getenv('S3_BUCKET'); print(f'[INFO] Deleting all keys under s3://{bucket}/{prefix}...'); boto3.resource('s3').Bucket(bucket).objects.filter(Prefix=prefix).delete(); print('[SUCCESS] Done!')"
+
+s3-smoke:
+	@python -c "import os, sys, boto3; [os.environ.update({l.split('=', 1)[0].strip(): l.split('=', 1)[1].strip()}) for l in open('.env') if '=' in l and not l.startswith('#')] if os.path.exists('.env') else None; [os.environ.pop(e) for e in ['AWS_SHARED_CREDENTIALS_FILE', 'AWS_CONFIG_FILE'] if e in os.environ and not os.path.exists(os.environ[e])]; bucket = os.getenv('S3_BUCKET'); boto3.client('s3').head_bucket(Bucket=bucket); print(f'[SUCCESS] S3 Connection Successful! Bucket: s3://{bucket}')"

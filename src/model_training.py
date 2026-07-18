@@ -256,6 +256,53 @@ class ModelTrainer:
         if type(model).__module__.startswith("pyspark.ml"):
             logger.info("  Framework  : PySpark MLlib")
             model.write().overwrite().save(filepath)
+            
+            # S3 Save
+            try:
+                from utils.config import force_s3_io
+                if force_s3_io():
+                    from utils.config import get_s3_bucket, get_aws_config
+                    from pyspark.sql import SparkSession
+                    bucket = get_s3_bucket()
+                    spark = SparkSession.builder.getOrCreate()
+                    sc = spark.sparkContext
+                    hadoop_conf = sc._jsc.hadoopConfiguration()
+                    aws_cfg = get_aws_config()
+                    region = aws_cfg.get('region', 'ap-south-1')
+                    access_key = os.environ.get('AWS_ACCESS_KEY_ID') or aws_cfg.get('aws_access_key_id')
+                    secret_key = os.environ.get('AWS_SECRET_ACCESS_KEY') or aws_cfg.get('aws_secret_access_key')
+                    if not access_key or not secret_key:
+                        try:
+                            import boto3
+                            for env_var in ['AWS_SHARED_CREDENTIALS_FILE', 'AWS_CONFIG_FILE']:
+                                val = os.getenv(env_var)
+                                if val and not os.path.exists(val):
+                                    del os.environ[env_var]
+                            session = boto3.Session()
+                            creds = session.get_credentials()
+                            if creds:
+                                access_key = creds.access_key
+                                secret_key = creds.secret_key
+                        except Exception:
+                            pass
+                    
+                    hadoop_conf.set("fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
+                    if access_key and secret_key:
+                        hadoop_conf.set("fs.s3a.access.key", access_key)
+                        hadoop_conf.set("fs.s3a.secret.key", secret_key)
+                    else:
+                        hadoop_conf.set("fs.s3a.aws.credentials.provider", "com.amazonaws.auth.DefaultAWSCredentialsProviderChain")
+                    hadoop_conf.set("fs.s3a.endpoint", f"s3.{region}.amazonaws.com")
+                    hadoop_conf.set("fs.s3a.connection.ssl.enabled", "true")
+                    
+                    proj_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+                    rel_path = os.path.relpath(os.path.abspath(filepath), proj_root).replace('\\', '/')
+                    s3_model_path = f"s3a://{bucket}/{rel_path}"
+                    model.write().overwrite().save(s3_model_path)
+                    logger.info(f"✓ Also saved PySpark PipelineModel directly to S3: {s3_model_path}")
+            except Exception as se:
+                logger.warning(f"⚠️ Failed to save Spark model to S3: {se}")
+                
             elapsed = time.time() - start
             logger.info(f"  Model type : {type(model).__name__}")
             logger.info(f"  Saved to   : {filepath} (Spark PipelineModel directory)")
@@ -265,6 +312,19 @@ class ModelTrainer:
 
         # Scikit-learn / XGBoost
         joblib.dump(model, filepath)
+        
+        # S3 Save
+        try:
+            from utils.config import force_s3_io
+            if force_s3_io():
+                from utils.s3_io import upload_file
+                proj_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+                rel_path = os.path.relpath(os.path.abspath(filepath), proj_root).replace('\\', '/')
+                upload_file(filepath, key=rel_path)
+                logger.info(f"✓ Also uploaded scikit-learn model to S3: s3://{rel_path}")
+        except Exception as se:
+            logger.warning(f"⚠️ Failed to upload scikit-learn model to S3: {se}")
+            
         elapsed = time.time() - start
         size_mb = os.path.getsize(filepath) / (1024 ** 2)
 
@@ -295,8 +355,65 @@ class ModelTrainer:
 
         if not filepath or not isinstance(filepath, str):
             raise ValueError("Invalid filepath provided.")
-        if not os.path.exists(filepath):
-            raise FileNotFoundError(f"Model file not found: {filepath}")
+
+        # S3 Load fallback / force check
+        try:
+            from utils.config import force_s3_io
+            if force_s3_io():
+                from utils.config import get_s3_bucket
+                bucket = get_s3_bucket()
+                proj_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+                rel_path = os.path.relpath(os.path.abspath(filepath), proj_root).replace('\\', '/')
+                
+                # Check if it's PySpark
+                if is_spark or rel_path.endswith('pipeline') or not rel_path.endswith('.joblib'):
+                    from pyspark.sql import SparkSession
+                    from pyspark.ml import PipelineModel
+                    from utils.config import get_aws_config
+                    spark = SparkSession.builder.getOrCreate()
+                    sc = spark.sparkContext
+                    hadoop_conf = sc._jsc.hadoopConfiguration()
+                    aws_cfg = get_aws_config()
+                    region = aws_cfg.get('region', 'ap-south-1')
+                    access_key = os.environ.get('AWS_ACCESS_KEY_ID') or aws_cfg.get('aws_access_key_id')
+                    secret_key = os.environ.get('AWS_SECRET_ACCESS_KEY') or aws_cfg.get('aws_secret_access_key')
+                    if not access_key or not secret_key:
+                        try:
+                            import boto3
+                            for env_var in ['AWS_SHARED_CREDENTIALS_FILE', 'AWS_CONFIG_FILE']:
+                                val = os.getenv(env_var)
+                                if val and not os.path.exists(val):
+                                    del os.environ[env_var]
+                            session = boto3.Session()
+                            creds = session.get_credentials()
+                            if creds:
+                                access_key = creds.access_key
+                                secret_key = creds.secret_key
+                        except Exception:
+                            pass
+                    
+                    hadoop_conf.set("fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
+                    if access_key and secret_key:
+                        hadoop_conf.set("fs.s3a.access.key", access_key)
+                        hadoop_conf.set("fs.s3a.secret.key", secret_key)
+                    else:
+                        hadoop_conf.set("fs.s3a.aws.credentials.provider", "com.amazonaws.auth.DefaultAWSCredentialsProviderChain")
+                    hadoop_conf.set("fs.s3a.endpoint", f"s3.{region}.amazonaws.com")
+                    hadoop_conf.set("fs.s3a.connection.ssl.enabled", "true")
+                    
+                    s3_model_path = f"s3a://{bucket}/{rel_path}"
+                    logger.info(f"Loading PySpark PipelineModel directly from S3: {s3_model_path}")
+                    model = PipelineModel.load(s3_model_path)
+                    logger.info(f"✓ Loaded from: {s3_model_path} (S3 Spark PipelineModel)")
+                    logger.info(f"{'='*60}\n")
+                    return model
+                else:
+                    # Scikit-learn: download to local path first
+                    from utils.s3_io import download_file
+                    logger.info(f"Downloading scikit-learn model from S3 (key: {rel_path}) to {filepath}")
+                    download_file(rel_path, local_path=filepath)
+        except Exception as se:
+            logger.warning(f"⚠️ S3 model loading failed/skipped: {se}. Falling back to local loader.")
 
         start = time.time()
         

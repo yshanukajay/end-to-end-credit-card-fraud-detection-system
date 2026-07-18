@@ -89,6 +89,17 @@ class InferenceTracker:
             
             mlflow.log_artifact(batch_path, "inference_batches")
             
+            # S3 Upload
+            try:
+                from utils.config import force_s3_io
+                if force_s3_io():
+                    from utils.s3_io import upload_file
+                    s3_key = f"artifacts/inference_batches/{batch_file}"
+                    upload_file(batch_path, key=s3_key)
+                    logger.info(f"✓ Uploaded prediction batch artifact to S3: s3://{s3_key}")
+            except Exception as se:
+                logger.warning(f"⚠️ Failed to upload prediction batch to S3: {se}")
+            
             logger.info(f"✓ Logged batch of {len(self.predictions_batch)} predictions")
             
             # Clear batch

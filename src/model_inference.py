@@ -102,8 +102,22 @@ class ModelInference:
             # Load thresholds metadata
             if self.model_path.endswith('.pkl'):
                 metadata_path = self.model_path.replace('.pkl', '_metadata.json')
+            elif self.model_path.endswith('.joblib'):
+                metadata_path = self.model_path.replace('.joblib', '_metadata.json')
             else:
                 metadata_path = self.model_path + "_metadata.json"
+                
+            try:
+                from utils.config import force_s3_io
+                if force_s3_io():
+                    from utils.s3_io import download_file, key_exists
+                    proj_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+                    rel_meta_path = os.path.relpath(os.path.abspath(metadata_path), proj_root).replace('\\', '/')
+                    if key_exists(rel_meta_path):
+                        logger.info(f"Downloading metadata from S3 to {metadata_path}")
+                        download_file(rel_meta_path, local_path=metadata_path)
+            except Exception as se:
+                logger.warning(f"⚠️ S3 metadata download failed: {se}")
                 
             if os.path.exists(metadata_path):
                 with open(metadata_path, 'r') as f:
@@ -132,6 +146,65 @@ class ModelInference:
         Load the trained model from disk with validation.
         """
         logger.info(f"Loading trained model from: {self.model_path}")
+        
+        # S3 Load if enabled
+        try:
+            from utils.config import force_s3_io
+            if force_s3_io():
+                from utils.config import get_s3_bucket
+                bucket = get_s3_bucket()
+                proj_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+                rel_path = os.path.relpath(os.path.abspath(self.model_path), proj_root).replace('\\', '/')
+                
+                # Check if it's Spark
+                if rel_path.endswith('pipeline') or not rel_path.endswith('.joblib') and not rel_path.endswith('.pkl'):
+                    from pyspark.sql import SparkSession
+                    from pyspark.ml import PipelineModel
+                    from utils.config import get_aws_config
+                    spark = getattr(self, "spark", None) or SparkSession.builder.getOrCreate()
+                    sc = spark.sparkContext
+                    hadoop_conf = sc._jsc.hadoopConfiguration()
+                    aws_cfg = get_aws_config()
+                    region = aws_cfg.get('region', 'ap-south-1')
+                    access_key = os.environ.get('AWS_ACCESS_KEY_ID') or aws_cfg.get('aws_access_key_id')
+                    secret_key = os.environ.get('AWS_SECRET_ACCESS_KEY') or aws_cfg.get('aws_secret_access_key')
+                    if not access_key or not secret_key:
+                        try:
+                            import boto3
+                            for env_var in ['AWS_SHARED_CREDENTIALS_FILE', 'AWS_CONFIG_FILE']:
+                                val = os.getenv(env_var)
+                                if val and not os.path.exists(val):
+                                    del os.environ[env_var]
+                            session = boto3.Session()
+                            creds = session.get_credentials()
+                            if creds:
+                                access_key = creds.access_key
+                                secret_key = creds.secret_key
+                        except Exception:
+                            pass
+                    
+                    hadoop_conf.set("fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
+                    if access_key and secret_key:
+                        hadoop_conf.set("fs.s3a.access.key", access_key)
+                        hadoop_conf.set("fs.s3a.secret.key", secret_key)
+                    else:
+                        hadoop_conf.set("fs.s3a.aws.credentials.provider", "com.amazonaws.auth.DefaultAWSCredentialsProviderChain")
+                    hadoop_conf.set("fs.s3a.endpoint", f"s3.{region}.amazonaws.com")
+                    hadoop_conf.set("fs.s3a.connection.ssl.enabled", "true")
+                    
+                    s3_model_path = f"s3a://{bucket}/{rel_path}"
+                    logger.info(f"Loading Spark model directly from S3: {s3_model_path}")
+                    self.model = PipelineModel.load(s3_model_path)
+                    self.is_spark_model = True
+                    return
+                else:
+                    from utils.s3_io import download_file, key_exists
+                    if key_exists(rel_path):
+                        logger.info(f"Downloading model from S3 ({rel_path}) to {self.model_path}")
+                        download_file(rel_path, local_path=self.model_path)
+        except Exception as se:
+            logger.warning(f"⚠️ S3 model load failed: {se}. Falling back to local loader.")
+
         if not os.path.exists(self.model_path):
             logger.error(f"✗ Model file not found: {self.model_path}")
             raise FileNotFoundError(f"Model file not found: {self.model_path}")
@@ -171,6 +244,24 @@ class ModelInference:
             encoders_dir = os.path.abspath(os.path.join(PROJECT_ROOT, encoders_dir))
             
         logger.info(f"Loading encoders from: {encoders_dir}")
+        
+        # Download from S3 first if enabled
+        try:
+            from utils.config import force_s3_io
+            if force_s3_io():
+                from utils.s3_io import list_keys, download_file
+                s3_prefix = "artifacts/encode/"
+                s3_keys = list_keys(prefix=s3_prefix)
+                encoder_keys = [k for k in s3_keys if k.endswith('_encoder.json')]
+                for k in encoder_keys:
+                    filename = os.path.basename(k)
+                    local_dest = os.path.join(encoders_dir, filename)
+                    os.makedirs(os.path.dirname(local_dest), exist_ok=True)
+                    logger.info(f"Downloading encoder from S3 ({k}) to {local_dest}")
+                    download_file(k, local_path=local_dest)
+        except Exception as se:
+            logger.warning(f"⚠️ S3 encoders download failed: {se}")
+
         if not os.path.exists(encoders_dir):
             logger.warning(f"⚠ Encoders directory not found: {encoders_dir}. Using defaults.")
             return
@@ -204,6 +295,21 @@ class ModelInference:
             scaler_dir = os.path.abspath(os.path.join(PROJECT_ROOT, scaler_dir))
             
         logger.info(f"Loading scaler from: {scaler_dir}")
+        
+        # Download scaler metadata from S3 first if enabled
+        try:
+            from utils.config import force_s3_io
+            if force_s3_io():
+                from utils.s3_io import download_file, key_exists
+                s3_metadata_key = "artifacts/scale/scaling_metadata.json"
+                if key_exists(s3_metadata_key):
+                    local_dest = os.path.join(scaler_dir, 'scaling_metadata.json')
+                    os.makedirs(os.path.dirname(local_dest), exist_ok=True)
+                    logger.info(f"Downloading scaler metadata from S3 to {local_dest}")
+                    download_file(s3_metadata_key, local_path=local_dest)
+        except Exception as se:
+            logger.warning(f"⚠️ S3 scaler metadata download failed: {se}")
+
         try:
             metadata_path = os.path.join(scaler_dir, 'scaling_metadata.json')
             

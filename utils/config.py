@@ -1,7 +1,7 @@
 import os
 import yaml
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
@@ -99,9 +99,70 @@ def get_inference_config() -> dict:
     return config.get('inference', {})
 
 
-def get_mlflow_config() -> dict:
+# AWS S3 Configuration Functions
+def get_aws_config() -> Dict[str, Any]:
+    """Get AWS configuration from config.yaml"""
     config = load_config()
-    return config.get('mlflow', {})
+    aws_config = config.get('aws', {})
+    
+    # Fallback to environment variables if not in config.yaml
+    return {
+        'region': aws_config.get('region', os.getenv('AWS_REGION', 'ap-south-1')),
+        'bucket': aws_config.get('s3_bucket', os.getenv('S3_BUCKET')),
+        'kms_key_arn': aws_config.get('s3_kms_key_arn', os.getenv('S3_KMS_KEY_ARN')),
+        'force_s3_io': aws_config.get('force_s3_io', os.getenv('FORCE_S3_IO', 'false').lower() in ('true', '1', 'yes'))
+    }
+
+
+def get_aws_region() -> str:
+    """Get AWS region from config.yaml or environment variables"""
+    aws_config = get_aws_config()
+    return aws_config['region']
+
+
+def get_s3_bucket() -> str:
+    """Get S3 bucket name from config.yaml or environment variables (required)"""
+    aws_config = get_aws_config()
+    bucket = aws_config['bucket']
+    if not bucket:
+        raise ValueError(
+            "S3 bucket is required. Please set 'aws.s3_bucket' in config.yaml "
+            "or S3_BUCKET environment variable."
+        )
+    return bucket
+
+
+def get_s3_kms_arn() -> Optional[str]:
+    """Get S3 KMS key ARN from config.yaml or environment variables"""
+    aws_config = get_aws_config()
+    return aws_config['kms_key_arn']
+
+
+def force_s3_io() -> bool:
+    """Check if S3-only I/O is enforced from config.yaml or environment variables"""
+    aws_config = get_aws_config()
+    return aws_config['force_s3_io']
+
+
+def get_mlflow_config() -> Dict[str, Any]:
+    """Get MLflow configuration from config.yaml"""
+    config = load_config()
+    mlflow_config = config.get('mlflow', {})
+    
+    # Environment variables take priority over config.yaml
+    return {
+        'tracking_uri': os.getenv('MLFLOW_TRACKING_URI') or mlflow_config.get('tracking_uri', 'sqlite:///mlflow.db'),
+        'artifact_root': os.getenv('MLFLOW_DEFAULT_ARTIFACT_ROOT') or mlflow_config.get('artifact_root'),
+        'experiment_name': mlflow_config.get('experiment_name', 'Credit Card Fraud Detection'),
+        'artifact_location': mlflow_config.get('artifact_location')
+    }
+
+
+def get_s3_config() -> Dict[str, Any]:
+    """Get complete S3 configuration (legacy function for compatibility)"""
+    config = load_config()
+    return config.get('aws', {})
+
 
 
 def get_config() -> Dict[str, Any]:

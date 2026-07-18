@@ -29,6 +29,49 @@ class FeatureScalingStrategy(ABC):
         """Initialize with SparkSession."""
         self.spark = spark or get_or_create_spark_session()
         self.fitted_model = None
+        
+    def _configure_s3(self):
+        """Configure Spark Hadoop configuration for S3 access if S3 is enabled."""
+        # Load credentials/region using our helper config functions
+        from utils.config import get_aws_config
+        aws_cfg = get_aws_config()
+        region = aws_cfg.get('region', 'ap-south-1')
+        
+        # Extract keys from system environment first, then config
+        access_key = os.environ.get('AWS_ACCESS_KEY_ID') or aws_cfg.get('aws_access_key_id')
+        secret_key = os.environ.get('AWS_SECRET_ACCESS_KEY') or aws_cfg.get('aws_secret_access_key')
+        
+        # Fallback to local profile check if boto3 is available
+        if not access_key or not secret_key:
+            try:
+                import boto3
+                # Pop env overrides first
+                for env_var in ['AWS_SHARED_CREDENTIALS_FILE', 'AWS_CONFIG_FILE']:
+                    val = os.getenv(env_var)
+                    if val and not os.path.exists(val):
+                        del os.environ[env_var]
+                session = boto3.Session()
+                creds = session.get_credentials()
+                if creds:
+                    access_key = creds.access_key
+                    secret_key = creds.secret_key
+            except Exception:
+                pass
+
+        # Configure Hadoop S3A settings
+        sc = self.spark.sparkContext
+        hadoop_conf = sc._jsc.hadoopConfiguration()
+        
+        hadoop_conf.set("fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
+        if access_key and secret_key:
+            hadoop_conf.set("fs.s3a.access.key", access_key)
+            hadoop_conf.set("fs.s3a.secret.key", secret_key)
+        else:
+            hadoop_conf.set("fs.s3a.aws.credentials.provider", "com.amazonaws.auth.DefaultAWSCredentialsProviderChain")
+            
+        hadoop_conf.set("fs.s3a.endpoint", f"s3.{region}.amazonaws.com")
+        hadoop_conf.set("fs.s3a.connection.ssl.enabled", "true")
+        hadoop_conf.set("fs.s3a.fast.upload", "true")
     
     @abstractmethod
     def scale(self, df: DataFrame, columns_to_scale: List[str]) -> DataFrame:
@@ -179,6 +222,27 @@ class MinMaxScalingStrategy(FeatureScalingStrategy):
                 json.dump(metadata, f, indent=2)
             
             logger.info(f"✓ Saved scaling metadata to: {metadata_path}")
+            
+            # Upload to S3 if S3 I/O is enabled
+            try:
+                from utils.config import force_s3_io
+                if force_s3_io():
+                    from utils.config import get_s3_bucket
+                    from utils.s3_io import upload_file
+                    
+                    bucket = get_s3_bucket()
+                    self._configure_s3()
+                    
+                    # Write Spark pipeline directly to S3
+                    s3_model_path = f"s3a://{bucket}/artifacts/scale/minmax_scaler_pipeline"
+                    self.pipeline_model.write().overwrite().save(s3_model_path)
+                    logger.info(f"✓ Saved PySpark scaler pipeline directly to S3: {s3_model_path}")
+                    
+                    # Upload metadata json
+                    upload_file(metadata_path, key="artifacts/scale/scaling_metadata.json")
+            except Exception as se:
+                logger.warning(f"⚠️ Failed to upload MinMaxScaler artifacts to S3: {se}")
+
             return True
             
         except Exception as e:
@@ -394,6 +458,27 @@ class StandardScalingStrategy(FeatureScalingStrategy):
                 json.dump(metadata, f, indent=2)
             
             logger.info(f"✓ Saved scaling metadata to: {metadata_path}")
+            
+            # Upload to S3 if S3 I/O is enabled
+            try:
+                from utils.config import force_s3_io
+                if force_s3_io():
+                    from utils.config import get_s3_bucket
+                    from utils.s3_io import upload_file
+                    
+                    bucket = get_s3_bucket()
+                    self._configure_s3()
+                    
+                    # Write Spark pipeline directly to S3
+                    s3_model_path = f"s3a://{bucket}/artifacts/scale/standard_scaler_pipeline"
+                    self.pipeline_model.write().overwrite().save(s3_model_path)
+                    logger.info(f"✓ Saved PySpark standard scaler pipeline directly to S3: {s3_model_path}")
+                    
+                    # Upload metadata json
+                    upload_file(metadata_path, key="artifacts/scale/scaling_metadata.json")
+            except Exception as se:
+                logger.warning(f"⚠️ Failed to upload StandardScaler artifacts to S3: {se}")
+
             return True
             
         except Exception as e:

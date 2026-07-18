@@ -41,8 +41,10 @@ class MLflowTracker:
         try:
             experiment = mlflow.get_experiment_by_name(experiment_name)
             if experiment is None:
-                abs_mlruns_path = os.path.abspath(os.path.join(PROJECT_ROOT, 'mlruns'))
-                artifact_location = Path(abs_mlruns_path).as_uri()
+                artifact_location = self.config.get('artifact_location')
+                if not artifact_location:
+                    abs_mlruns_path = os.path.abspath(os.path.join(PROJECT_ROOT, 'mlruns'))
+                    artifact_location = Path(abs_mlruns_path).as_uri()
                 experiment_id = mlflow.create_experiment(experiment_name, artifact_location=artifact_location)
                 logger.info(f"Created new MLflow experiment: {experiment_name} (ID: {experiment_id}) at {artifact_location}")
             else:

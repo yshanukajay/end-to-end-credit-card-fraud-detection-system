@@ -21,6 +21,56 @@ class DataIngestor(ABC):
             spark: Optional SparkSession. If not provided, will create/get one.
         """
         self.spark = spark or get_or_create_spark_session()
+        
+    def _configure_s3(self, file_path: str) -> str:
+        """Configure Spark Hadoop configuration for S3 access if path is S3."""
+        if file_path.startswith("s3://") or file_path.startswith("s3a://"):
+            s3a_path = file_path.replace("s3://", "s3a://")
+            
+            # Load credentials/region using our helper config functions
+            from utils.config import get_aws_config
+            aws_cfg = get_aws_config()
+            region = aws_cfg.get('region', 'ap-south-1')
+            
+            # Extract keys from system environment first, then config
+            access_key = os.environ.get('AWS_ACCESS_KEY_ID') or aws_cfg.get('aws_access_key_id')
+            secret_key = os.environ.get('AWS_SECRET_ACCESS_KEY') or aws_cfg.get('aws_secret_access_key')
+            
+            # Fallback to local profile check if boto3 is available
+            if not access_key or not secret_key:
+                try:
+                    import boto3
+                    # Pop env overrides first
+                    for env_var in ['AWS_SHARED_CREDENTIALS_FILE', 'AWS_CONFIG_FILE']:
+                        val = os.getenv(env_var)
+                        if val and not os.path.exists(val):
+                            del os.environ[env_var]
+                    session = boto3.Session()
+                    creds = session.get_credentials()
+                    if creds:
+                        access_key = creds.access_key
+                        secret_key = creds.secret_key
+                except Exception:
+                    pass
+
+            # Configure Hadoop S3A settings
+            sc = self.spark.sparkContext
+            hadoop_conf = sc._jsc.hadoopConfiguration()
+            
+            hadoop_conf.set("fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
+            if access_key and secret_key:
+                hadoop_conf.set("fs.s3a.access.key", access_key)
+                hadoop_conf.set("fs.s3a.secret.key", secret_key)
+            else:
+                hadoop_conf.set("fs.s3a.aws.credentials.provider", "com.amazonaws.auth.DefaultAWSCredentialsProviderChain")
+                
+            hadoop_conf.set("fs.s3a.endpoint", f"s3.{region}.amazonaws.com")
+            hadoop_conf.set("fs.s3a.connection.ssl.enabled", "true")
+            hadoop_conf.set("fs.s3a.fast.upload", "true")
+            
+            logger.info(f"✓ Configured Spark Hadoop context for S3 access (Region: {region}, Path: {s3a_path})")
+            return s3a_path
+        return file_path
     
     @abstractmethod
     def ingest(self, file_path_or_link: str) -> DataFrame:
@@ -73,6 +123,7 @@ class DataIngestorCSV(DataIngestor):
             # df = pd.read_csv(file_path_or_link)
             
             ############### PYSPARK CODES ###########################
+            file_path_or_link = self._configure_s3(file_path_or_link)
             df = self.spark.read.options(**csv_options).csv(file_path_or_link)
             
             logger.info(f"✓ CSV data loaded successfully")
@@ -158,6 +209,7 @@ class DataIngestorParquet(DataIngestor):
         
         try:
             # Read Parquet file(s)
+            file_path_or_link = self._configure_s3(file_path_or_link)
             df = self.spark.read.parquet(file_path_or_link)
             
             logger.info(f"✓ Parquet data loaded successfully")

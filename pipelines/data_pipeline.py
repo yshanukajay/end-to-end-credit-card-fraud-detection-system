@@ -142,7 +142,19 @@ def save_processed_data(
         Y_train_pd.to_parquet(paths['Y_train_parquet'], index=False)
         Y_test_pd.to_parquet(paths['Y_test_parquet'], index=False)
         logger.info("✓ Parquet files saved")
-    
+    # Upload to S3 if S3 I/O is enabled
+    try:
+        from utils.config import force_s3_io
+        if force_s3_io():
+            from utils.s3_io import upload_file
+            logger.info("Uploading processed data splits to S3...")
+            for name, filepath in paths.items():
+                key = os.path.relpath(os.path.abspath(filepath), PROJECT_ROOT).replace('\\', '/')
+                upload_file(filepath, key=key)
+                logger.info(f"✓ Uploaded {name} to S3: s3://{key}")
+    except Exception as se:
+        logger.warning(f"⚠️ Failed to upload processed data splits to S3: {se}")
+        
     return paths
 
 
@@ -175,9 +187,10 @@ def data_pipeline(
         data_path = os.path.join(PROJECT_ROOT, data_paths.get('raw_data', 'dataset/raw/fraudTrain.csv'))
         
     # Input validation
-    if not os.path.exists(data_path):
-        logger.error(f"✗ Data file not found: {data_path}")
-        raise FileNotFoundError(f"Data file not found: {data_path}")
+    if not data_path.startswith("s3://") and not data_path.startswith("s3a://"):
+        if not os.path.exists(data_path):
+            logger.error(f"✗ Data file not found: {data_path}")
+            raise FileNotFoundError(f"Data file not found: {data_path}")
     
     if not 0 < test_size < 1:
         logger.error(f"✗ Invalid test_size: {test_size}")
