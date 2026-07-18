@@ -117,6 +117,8 @@ help:
 	@echo "  make docker-inference-pipeline - Run inference pipeline in Docker"
 	@echo "  make docker-run-all      - Run all pipelines in Docker"
 	@echo "  make docker-status       - Show Docker service status"
+	@echo "  make docker-clean        - Remove containers, local volumes and built images"
+	@echo "  make docker-nuclear      - Destroy all containers, cache, images, volumes, logs, and runs"
 	@echo ""
 	@echo "🌐 S3 Commands:"
 	@echo "  make s3-upload-data              - Upload data/raw & data/processed to S3 (one-time)"
@@ -499,6 +501,23 @@ docker-run-all:
 docker-status:
 	@echo "🐳 Showing Docker service status..."
 	docker compose ps
+
+docker-clean:
+	@echo "🐳 Stopping containers, clearing volumes, and deleting built images..."
+	docker compose down -v --rmi local --remove-orphans
+	@echo "✅ Docker cleanup completed successfully!"
+
+docker-nuclear:
+	@echo "⚠️  WARNING: This is a nuclear reset!"
+	@echo "   It will stop and remove ALL containers, images, volumes, build cache, and local runs/logs/checkpoints."
+	@python -c "import sys; val = input('Are you sure you want to run nuclear reset? (y/N): '); sys.exit(0 if val.strip().lower() == 'y' else 1)"
+	@echo "🐳 Stopping compose services..."
+	docker compose down -v --rmi all --remove-orphans
+	@echo "🐳 Pruning all unused Docker objects & build cache..."
+	docker system prune -a --volumes -f
+	@echo "🧹 Cleaning local runtime, logs, runs, and artifacts..."
+	-rm -rf logs/* mlruns/* artifacts/data/* artifacts/models/* artifacts/scale/* artifacts/encode/* artifacts/inference_batches/* dataset/processed/* airflow/*.db airflow/logs/* runtime/pids/* runtime/kafka-logs/*
+	@echo "✅ Nuclear cleanup completed successfully! Clean slate."
 
 # ========================================================================================
 # S3 ORCHESTRATION COMMANDS

@@ -13,6 +13,19 @@ from pyspark.sql import SparkSession
 os.environ["PYSPARK_PYTHON"] = sys.executable
 os.environ["PYSPARK_DRIVER_PYTHON"] = sys.executable
 
+# Add modular open-packages options for Java 17+ / Java 21 compatibility with PyArrow/PySpark
+if "JDK_JAVA_OPTIONS" not in os.environ:
+    os.environ["JDK_JAVA_OPTIONS"] = (
+        "--add-opens=java.base/java.nio=ALL-UNNAMED "
+        "--add-opens=java.base/java.net=ALL-UNNAMED "
+        "--add-opens=java.base/java.lang=ALL-UNNAMED "
+        "--add-opens=java.base/java.util=ALL-UNNAMED "
+        "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED "
+        "--add-opens=java.base/java.text=ALL-UNNAMED "
+        "--add-opens=java.base/java.util.regex=ALL-UNNAMED "
+        "--add-opens=java.base/java.io=ALL-UNNAMED"
+    )
+
 logger = logging.getLogger(__name__)
 
 
