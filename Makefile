@@ -1,11 +1,12 @@
 SHELL := /usr/bin/env bash
 .ONESHELL:
 
-.PHONY: all clean install setup-dirs train-pipeline data-pipeline batch-inference clean-kill help \
+.PHONY: all clean install setup-dirs train-pipeline data-pipeline batch-inference run-all clean-kill help \
          kafka-format kafka-start kafka-start-bg kafka-stop kafka-topics kafka-cleanup-topics \
          kafka-producer-stream kafka-producer-batch kafka-consumer kafka-consumer-continuous \
          kafka-check kafka-monitor kafka-sample-scored kafka-reset kafka-help \
-         airflow-init airflow-start airflow-kill airflow-reset
+         airflow-init airflow-start airflow-kill airflow-reset \
+         docker-build docker-up docker-down docker-data-pipeline docker-model-pipeline docker-inference-pipeline docker-run-all docker-status
 
 # Default Python interpreter
 PYTHON = python
@@ -19,17 +20,34 @@ export AIRFLOW_HOME := $(abspath $(ROOT_DIR)airflow)
 
 # Setup virtual environment path depending on OS
 ifeq ($(OS),Windows_NT)
-  VENV = .venv/Scripts/activate
+  VENV_DIR = .venv
+  VENV_PYTHON = $(VENV_DIR)/Scripts/python.exe
+  VENV_MLFLOW = $(VENV_DIR)/Scripts/mlflow.exe
+  VENV_AIRFLOW = $(VENV_DIR)/Scripts/airflow.exe
   KAFKA_HOME ?= C:\kafka_2.12-3.7.0
   KAFKA_BIN_DIR = $(KAFKA_HOME)/bin/windows/
   KAFKA_SCRIPT_EXT = .bat
-  KAFKA_CONFIG_FILE ?= $(ROOT_DIR)kafka\server.properties
+  KAFKA_CONFIG_FILE ?= $(ROOT_DIR)kafka/server.properties
 else
-  VENV = .venv/bin/activate
+  VENV_DIR = .venv
+  VENV_PYTHON = $(VENV_DIR)/bin/python
+  VENV_MLFLOW = $(VENV_DIR)/bin/mlflow
+  VENV_AIRFLOW = $(VENV_DIR)/bin/airflow
   KAFKA_HOME ?= /opt/kafka
   KAFKA_BIN_DIR = $(KAFKA_HOME)/bin/
   KAFKA_SCRIPT_EXT = .sh
   KAFKA_CONFIG_FILE ?= $(ROOT_DIR)kafka/server.properties
+endif
+
+# Fallback to system / active environment (e.g. Conda) if .venv directory does not exist
+ifeq ($(wildcard $(VENV_DIR)),)
+  RUN_PYTHON = python
+  RUN_MLFLOW = mlflow
+  RUN_AIRFLOW = airflow
+else
+  RUN_PYTHON = $(VENV_PYTHON)
+  RUN_MLFLOW = $(VENV_MLFLOW)
+  RUN_AIRFLOW = $(VENV_AIRFLOW)
 endif
 
 # Cross-platform directory creation tool
@@ -89,6 +107,16 @@ help:
 	@echo "  make airflow-reset       - Reset Airflow database"
 	@echo "  make clean-kill          - Kill all processes and clean logs/data"
 	@echo ""
+	@echo "🐳 Docker Services Commands:"
+	@echo "  make docker-build        - Build all Docker images"
+	@echo "  make docker-up           - Start all Docker services"
+	@echo "  make docker-down         - Stop all Docker services"
+	@echo "  make docker-data-pipeline    - Run data pipeline in Docker"
+	@echo "  make docker-model-pipeline   - Run model pipeline in Docker"
+	@echo "  make docker-inference-pipeline - Run inference pipeline in Docker"
+	@echo "  make docker-run-all      - Run all pipelines in Docker"
+	@echo "  make docker-status       - Show Docker service status"
+	@echo ""
 	@echo "💡 Quick Start (Batch Processing):"
 	@echo "  1. make install && make setup-dirs"
 	@echo "  2. make kafka-start-bg && make kafka-topics"
@@ -135,20 +163,24 @@ clean:
 # Run data pipeline
 data-pipeline: setup-dirs
 	@echo "🔄 Start running data pipeline..."
-	@source $(VENV) && $(PYTHON) pipelines/data_pipeline.py
+	@$(RUN_PYTHON) pipelines/data_pipeline.py
 	@echo "✅ Data pipeline completed successfully!"
 
 # Run training pipeline
 train-pipeline: setup-dirs
 	@echo "🎯 Running XGBoost model training pipeline..."
-	@source $(VENV) && $(PYTHON) pipelines/train_pipeline.py
+	@$(RUN_PYTHON) pipelines/train_pipeline.py
 	@echo "✅ Training pipeline completed successfully!"
 
 # Run streaming inference pipeline
 batch-inference: setup-dirs
 	@echo "🔮 Running batch/streaming inference pipeline..."
-	@source $(VENV) && $(PYTHON) pipelines/streaming_inference_pipeline.py
+	@$(RUN_PYTHON) pipelines/streaming_inference_pipeline.py
 	@echo "✅ Batch/streaming inference completed successfully!"
+
+# Run the entire pipeline end-to-end
+run-all: data-pipeline train-pipeline batch-inference
+	@echo "✅ Entire ML pipeline (Ingestion -> Split -> Features -> Scale -> Model -> Evaluator) run completed successfully!"
 
 # Comprehensive cleanup and kill command
 clean-kill:
@@ -192,7 +224,7 @@ mlflow-ui:
 	@echo "📊 Launching MLflow UI..."
 	@echo "MLflow UI will be available at: http://localhost:$(MLFLOW_PORT)"
 	@echo "Press Ctrl+C to stop the server"
-	@source $(VENV) && mlflow ui --backend-store-uri sqlite:///mlflow.db --default-artifact-root mlruns --host 127.0.0.1 --port $(MLFLOW_PORT)
+	@$(RUN_MLFLOW) ui --backend-store-uri sqlite:///mlflow.db --default-artifact-root mlruns --host 127.0.0.1 --port $(MLFLOW_PORT)
 
 # Stop all running MLflow servers
 stop-all:
@@ -233,7 +265,7 @@ endif
 
 kafka-validate:
 	@echo "🔍 Validating native Kafka installation..."
-	@source $(VENV) && $(PYTHON) -m utils.kafka_utils validate
+	@$(RUN_PYTHON) -m utils.kafka_utils validate
 
 kafka-start:
 	@echo "🚀 Starting native Kafka broker in foreground..."
@@ -272,37 +304,37 @@ endif
 
 kafka-topics:
 	@echo "📋 Creating fraud detection topics on native broker..."
-	@source $(VENV) && $(PYTHON) -m utils.kafka_utils setup-topics
+	@$(RUN_PYTHON) -m utils.kafka_utils setup-topics
 
 kafka-producer-stream:
 	@echo "🌊 Starting Kafka streaming producer (real data sampling)..."
-	@source $(VENV) && $(PYTHON) pipelines/kafka_producer.py --mode streaming --rate 1 --duration 300
+	@$(RUN_PYTHON) pipelines/kafka_producer.py --mode streaming --rate 1 --duration 300
 
 kafka-producer-batch:
 	@echo "📦 Starting Kafka batch producer (real data sampling)..."
-	@source $(VENV) && $(PYTHON) pipelines/kafka_producer.py --mode batch --num-events 100
+	@$(RUN_PYTHON) pipelines/kafka_producer.py --mode batch --num-events 100
 
 kafka-consumer:
 	@echo "🌊 Starting Kafka batch consumer with ML predictions..."
-	@source $(VENV) && $(PYTHON) pipelines/kafka_batch_consumer.py
+	@$(RUN_PYTHON) pipelines/kafka_batch_consumer.py
 
 kafka-consumer-continuous:
 	@echo "🔄 Starting continuous Kafka consumer monitoring..."
 	@echo "📡 Monitoring for NEW messages (real-time ML processing)"
 	@echo "🛑 Press Ctrl+C to stop monitoring"
-	@source $(VENV) && $(PYTHON) pipelines/kafka_batch_consumer.py --continuous --poll-interval 5
+	@$(RUN_PYTHON) pipelines/kafka_batch_consumer.py --continuous --poll-interval 5
 	
 kafka-check:
 	@echo "🔍 Checking native Kafka broker status..."
-	@source $(VENV) && $(PYTHON) -m utils.kafka_utils validate
+	@$(RUN_PYTHON) -m utils.kafka_utils validate
 	
 kafka-sample-scored:
 	@echo "📊 Analyzing fraud prediction results..."
-	@source $(VENV) && $(PYTHON) scripts/kafka_analytics.py
+	@$(RUN_PYTHON) scripts/kafka_analytics.py
 
 kafka-monitor:
 	@echo "📊 Monitoring Kafka lag..."
-	@source $(VENV) && $(PYTHON) -c " \
+	@$(RUN_PYTHON) -c " \
 import utils.kafka_utils as ku; \
 import json; \
 lag = ku.monitor_consumer_lag('fraud_detection_group', 'raw_transactions'); \
@@ -389,10 +421,9 @@ kafka-help:
 airflow-init:
 	@echo "🔧 Initializing Apache Airflow..."
 	@export PYTHONPATH="$(ROOT_DIR):$$PYTHONPATH" && \
-	source $(VENV) && \
-	airflow db migrate && \
-	airflow users create -u admin -p admin -r Admin -e admin@example.com -f Admin -l User && \
-	mkdir -p $(AIRFLOW_HOME)/dags && find dags -name "*.py" -exec cp {} $(AIRFLOW_HOME)/dags/ \;
+	$(RUN_AIRFLOW) db migrate && \
+	$(RUN_AIRFLOW) users create -u admin -p admin -r Admin -e admin@example.com -f Admin -l User && \
+	$(MKDIR) $(AIRFLOW_HOME)/dags && find dags -name "*.py" -exec cp {} $(AIRFLOW_HOME)/dags/ \;
 	@echo "✅ Airflow initialized successfully!"
 
 airflow-start:
@@ -402,8 +433,7 @@ airflow-start:
 	@find dags -name "*.py" -exec cp {} $(AIRFLOW_HOME)/dags/ \; 2>/dev/null || true
 	@echo "Starting Airflow standalone..."
 	@export PYTHONPATH="$(ROOT_DIR):$$PYTHONPATH" && \
-	source $(VENV) && \
-	airflow standalone
+	$(RUN_AIRFLOW) standalone
 
 airflow-kill:
 	@echo "🛑 Killing all Airflow processes..."
@@ -420,7 +450,44 @@ airflow-reset:
 	@$(MAKE) airflow-kill
 	@rm -rf $(AIRFLOW_HOME)/airflow.db $(AIRFLOW_HOME)/logs/*
 	@export PYTHONPATH="$(ROOT_DIR):$$PYTHONPATH" && \
-	source $(VENV) && \
-	airflow db migrate && \
-	airflow users create -u admin -p admin -r Admin -e admin@example.com -f Admin -l User
+	$(RUN_AIRFLOW) db migrate && \
+	$(RUN_AIRFLOW) users create -u admin -p admin -r Admin -e admin@example.com -f Admin -l User
 	@echo "✅ Airflow reset complete!"
+
+# ========================================================================================
+# DOCKER SERVICES COMMANDS
+# ========================================================================================
+
+docker-build:
+	@echo "🐳 Building all Docker images..."
+	docker compose build
+
+docker-up:
+	@echo "🐳 Starting all Docker services..."
+	docker compose up -d mlflow-tracking
+
+docker-down:
+	@echo "🐳 Stopping all Docker services..."
+	docker compose down
+
+docker-data-pipeline:
+	@echo "🐳 Running data pipeline in Docker..."
+	docker compose run --rm data-pipeline
+
+docker-model-pipeline:
+	@echo "🐳 Running model pipeline in Docker..."
+	docker compose run --rm model-pipeline
+
+docker-inference-pipeline:
+	@echo "🐳 Running inference pipeline in Docker..."
+	docker compose run --rm inference-pipeline
+
+docker-run-all:
+	@echo "🐳 Running all pipelines in Docker sequentially..."
+	docker compose run --rm data-pipeline
+	docker compose run --rm model-pipeline
+	docker compose run --rm inference-pipeline
+
+docker-status:
+	@echo "🐳 Showing Docker service status..."
+	docker compose ps

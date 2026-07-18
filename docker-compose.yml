@@ -1,0 +1,77 @@
+version: '3.8'
+
+services:
+  mlflow-tracking:
+    build:
+      context: .
+      dockerfile: docker/mlflow-tracking/Dockerfile
+    container_name: mlflow-tracking
+    ports:
+      - "5001:5001"
+    environment:
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - AWS_PROFILE=${AWS_PROFILE:-default}
+      - AWS_SHARED_CREDENTIALS_FILE=/home/appuser/.aws/credentials
+      - AWS_CONFIG_FILE=/home/appuser/.aws/config
+      - MLFLOW_BACKEND_STORE_URI=sqlite:///mlflow.db
+      - MLFLOW_DEFAULT_ARTIFACT_ROOT=s3://${S3_BUCKET}/mlflow-artifacts
+    volumes:
+      - mlflow_data:/tmp/mlruns
+      - ~/.aws:/aws:ro
+      - ~/.aws:/home/appuser/.aws:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    restart: always
+
+  data-pipeline:
+    build:
+      context: .
+      dockerfile: docker/data-pipeline/Dockerfile
+    container_name: data-pipeline
+    environment:
+      - S3_BUCKET=${S3_BUCKET}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - MLFLOW_TRACKING_URI=http://mlflow-tracking:5001
+    volumes:
+      - ~/.aws:/aws:ro
+    depends_on:
+      mlflow-tracking:
+        condition: service_healthy
+
+  model-pipeline:
+    build:
+      context: .
+      dockerfile: docker/model-pipeline/Dockerfile
+    container_name: model-pipeline
+    environment:
+      - S3_BUCKET=${S3_BUCKET}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - MLFLOW_TRACKING_URI=http://mlflow-tracking:5001
+    volumes:
+      - ~/.aws:/aws:ro
+    depends_on:
+      mlflow-tracking:
+        condition: service_healthy
+
+  inference-pipeline:
+    build:
+      context: .
+      dockerfile: docker/inference-pipeline/Dockerfile
+    container_name: inference-pipeline
+    environment:
+      - S3_BUCKET=${S3_BUCKET}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - MLFLOW_TRACKING_URI=http://mlflow-tracking:5001
+    volumes:
+      - ~/.aws:/aws:ro
+    depends_on:
+      mlflow-tracking:
+        condition: service_healthy
+
+volumes:
+  mlflow_data:
