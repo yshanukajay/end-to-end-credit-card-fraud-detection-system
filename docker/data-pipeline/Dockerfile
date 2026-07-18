@@ -1,23 +1,21 @@
 # Data Pipeline Service  
-FROM eclipse-temurin:17-jre
+FROM python:3.11-slim
 
 LABEL org.opencontainers.image.source="https://github.com/yshanukajay/end-to-end-credit-card-fraud-detection-system"
 LABEL org.opencontainers.image.version="1.0.0"
 LABEL org.opencontainers.image.description="Data Pipeline with PySpark and S3 integration"
 
-# Install Python and system dependencies
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 python3-pip python3-dev curl wget \
+# Install Java and system dependencies (creating man directory to prevent Debian post-install failure)
+RUN mkdir -p /usr/share/man/man1 \
+ && apt-get update && apt-get install -y --no-install-recommends \
+    default-jre-headless curl wget \
     && rm -rf /var/lib/apt/lists/*
-
-# Create symbolic link for python
-RUN ln -s /usr/bin/python3 /usr/bin/python
 
 # Create group/user and home dir with proper permissions
 ARG UID=1001
 ARG GID=1001
-RUN addgroup --system --gid $GID app \
- && adduser --system --uid $UID --ingroup app --home /home/appuser --shell /bin/bash appuser \
+RUN groupadd --system --gid $GID app \
+ && useradd --system --uid $UID --gid app --home-dir /home/appuser --shell /bin/bash appuser \
  && mkdir -p /home/appuser /opt/app /tmp/spark /tmp/hadoop \
  && chown -R appuser:app /home/appuser /opt/app /tmp/spark /tmp/hadoop
 
@@ -26,7 +24,7 @@ WORKDIR /opt/app
 
 # Copy requirements and install Python dependencies
 COPY requirements.txt .
-RUN pip3 install --no-cache-dir --break-system-packages -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy project source code with proper ownership
 COPY --chown=appuser:app src/ ./src/
@@ -43,6 +41,7 @@ USER appuser
 
 # Environment variables (consolidated)
 ENV HOME=/home/appuser \
+    JAVA_HOME=/usr/lib/jvm/default-java \
     SPARK_LOCAL_DIRS=/tmp/spark \
     HADOOP_OPTS="-Djava.io.tmpdir=/tmp/hadoop" \
     PYTHONUNBUFFERED=1 \
