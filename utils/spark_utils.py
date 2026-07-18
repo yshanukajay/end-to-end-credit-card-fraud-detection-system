@@ -3,6 +3,7 @@ Common PySpark utility functions for data processing and transformation.
 """
 
 import logging
+from functools import reduce as _functools_reduce
 from typing import List, Dict, Optional, Union, Tuple
 import pandas as pd
 from pyspark.sql import DataFrame, SparkSession
@@ -15,6 +16,15 @@ logger = logging.getLogger(__name__)
 def spark_to_pandas(df: DataFrame, max_records: Optional[int] = None) -> pd.DataFrame:
     """
     Convert PySpark DataFrame to pandas DataFrame safely.
+
+    Arrow's ``_collect_as_arrow`` buffers ALL rows in the JVM heap before
+    transmitting them to Python.  On large DataFrames (≥ 1 M rows) this
+    triggers an OOM inside the JVM worker, which kills the Py4J socket and
+    produces a cascade of ``BrokenPipeError`` / ``ConnectionRefusedError``.
+
+    To avoid this we **always disable Arrow** for driver-side collection and
+    use PySpark's row-by-row serialiser, which streams data in small chunks
+    and never requires a single contiguous JVM buffer.
     
     Args:
         df: PySpark DataFrame
@@ -27,19 +37,92 @@ def spark_to_pandas(df: DataFrame, max_records: Optional[int] = None) -> pd.Data
         if max_records:
             df = df.limit(max_records)
         
-        # Use Arrow optimization if available
+        spark = df.sparkSession
+
+        # Remember the original Arrow setting so we can restore it afterwards
+        arrow_was_enabled = spark.conf.get(
+            "spark.sql.execution.arrow.pyspark.enabled", "false"
+        )
+
+        # Pre-disable Arrow BEFORE calling toPandas to prevent the JVM from
+        # attempting to materialise all rows in one Arrow batch.
+        spark.conf.set("spark.sql.execution.arrow.pyspark.enabled", "false")
         try:
-            pandas_df = df.toPandas() # columnar 
-        except:
-            # Fallback to regular conversion
-            logger.warning("Arrow optimization not available, using standard conversion")
-            pandas_df = df.toPandas() # row-by-row
+            pandas_df = df.toPandas()  # row-by-row (safe for large DataFrames)
+        finally:
+            # Always restore the original Arrow setting
+            spark.conf.set(
+                "spark.sql.execution.arrow.pyspark.enabled", arrow_was_enabled
+            )
         
         logger.info(f"✓ Converted PySpark DataFrame to pandas: {pandas_df.shape}")
         return pandas_df
         
     except Exception as e:
         logger.error(f"✗ Error converting to pandas: {str(e)}")
+        raise
+
+
+
+def spark_stratified_split(
+    df: DataFrame,
+    label_col: str,
+    test_size: float = 0.2,
+    seed: int = 42
+) -> Tuple[DataFrame, DataFrame]:
+    """
+    Perform a stratified train/test split entirely inside Spark — no rows
+    are collected to the driver.  Each class partition is split individually
+    with ``randomSplit`` and the results are unioned back together.
+
+    This avoids the JVM-OOM issue that occurs when ``toPandas()`` (with or
+    without Arrow) tries to buffer the entire dataset on the driver before
+    the split.
+
+    Args:
+        df:        PySpark DataFrame containing features and the label column.
+        label_col: Name of the binary/multi-class label column.
+        test_size: Fraction of data to reserve for testing (default 0.2).
+        seed:      Random seed for reproducibility.
+
+    Returns:
+        Tuple[train_df, test_df] — both are PySpark DataFrames.
+    """
+    try:
+        train_size = 1.0 - test_size
+
+        # Collect only the distinct class values (2 values for binary classification)
+        classes = [
+            row[label_col]
+            for row in df.select(label_col).distinct().collect()
+        ]
+        logger.info(
+            f"Stratified split: {len(classes)} class(es) detected in '{label_col}'"
+        )
+
+        train_dfs: List[DataFrame] = []
+        test_dfs: List[DataFrame] = []
+
+        for cls_val in classes:
+            cls_df = df.filter(F.col(label_col) == cls_val)
+            train_cls, test_cls = cls_df.randomSplit(
+                [train_size, test_size], seed=seed
+            )
+            train_dfs.append(train_cls)
+            test_dfs.append(test_cls)
+
+        train_df = _functools_reduce(lambda a, b: a.union(b), train_dfs)
+        test_df = _functools_reduce(lambda a, b: a.union(b), test_dfs)
+
+        logger.info(
+            f"✓ Stratified split complete "
+            f"(test_size={test_size}, seed={seed}): "
+            f"train≈{train_df.count()}, test≈{test_df.count()} rows"
+        )
+        return train_df, test_df
+
+    except Exception as e:
+        logger.error(f"✗ Failed to perform stratified split: {str(e)}")
         raise
 
 

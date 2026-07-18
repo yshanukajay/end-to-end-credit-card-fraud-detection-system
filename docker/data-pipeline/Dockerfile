@@ -23,8 +23,10 @@ RUN groupadd --system --gid $GID app \
 WORKDIR /opt/app
 
 # Copy requirements and install Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Use the slim data-pipeline requirements (excludes WandB/Airflow/Jupyter/Kafka)
+# which avoids pulling nvidia_nccl_cu12 (303 MB CUDA wheel) that times out.
+COPY requirements-data-pipeline.txt .
+RUN pip install --no-cache-dir --timeout 120 --retries 5 -r requirements-data-pipeline.txt
 
 # Copy project source code with proper ownership
 COPY --chown=appuser:app src/ ./src/

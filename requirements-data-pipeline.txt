@@ -1,0 +1,64 @@
+# ==============================================================================
+# Slim requirements for the DATA-PIPELINE Docker image only.
+# This intentionally excludes: Airflow, WandB (pulls nvidia/CUDA wheels),
+# Kafka, FastAPI/Uvicorn, Jupyter, and other dev tools that are not needed
+# at data-pipeline runtime and would bloat/break the build.
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# Core data science
+# ------------------------------------------------------------------------------
+# numpy <2.0 is required: pyarrow 14.x was compiled against the NumPy 1.x ABI.
+# Removing the upper bound will pull NumPy 2.x which breaks PyArrow's C extension
+# (_ARRAY_API not found) and cascades into a full JVM crash.
+numpy>=1.23.2,<2.0
+pandas>=1.5.3
+scipy>=1.9.2
+
+# ------------------------------------------------------------------------------
+# Machine learning
+# ------------------------------------------------------------------------------
+scikit-learn>=1.2.0
+imbalanced-learn>=0.10.1
+xgboost>=1.7.3
+# lightgbm: pin below 4.0 to avoid GPU/CUDA optional wheel downloads on Linux
+lightgbm>=3.3.5,<4.0.0
+joblib>=1.2.0
+
+# ------------------------------------------------------------------------------
+# Visualisation (used in data_pipeline.py EDA / correlation plots)
+# ------------------------------------------------------------------------------
+matplotlib>=3.6.2
+seaborn>=0.12.2
+plotly>=5.11.0
+
+# ------------------------------------------------------------------------------
+# Config & utilities
+# ------------------------------------------------------------------------------
+pyyaml>=6.0.1
+python-dotenv>=1.0.0
+
+# ------------------------------------------------------------------------------
+# PySpark + Arrow
+# PyArrow must stay on 14.x until numpy <2.0 constraint is lifted.
+# ------------------------------------------------------------------------------
+pyspark==3.5.6
+pyarrow>=14.0.2,<15.0.0
+
+# ------------------------------------------------------------------------------
+# Experiment tracking (MLflow only - no WandB in this image)
+# WandB >= 0.19 pulls torch -> nvidia_nccl_cu12 (303 MB) as transient dep,
+# causing pip to time out during Docker builds on slow networks.
+# ------------------------------------------------------------------------------
+mlflow>=2.3.0
+
+# ------------------------------------------------------------------------------
+# AWS / S3 integration
+# ------------------------------------------------------------------------------
+boto3>=1.26.0
+botocore>=1.29.0
+
+# ------------------------------------------------------------------------------
+# HTTP / misc runtime deps pulled by mlflow / pyspark
+# ------------------------------------------------------------------------------
+requests>=2.28.0

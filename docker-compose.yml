@@ -33,6 +33,7 @@ services:
       context: .
       dockerfile: docker/data-pipeline/Dockerfile
     container_name: data-pipeline
+    shm_size: '512m'
     environment:
       - S3_BUCKET=${S3_BUCKET}
       - AWS_REGION=${AWS_REGION:-us-east-1}
@@ -42,6 +43,12 @@ services:
       - ~/.aws:/aws:ro
       - ./dataset:/opt/app/dataset
       - ./artifacts:/opt/app/artifacts
+    deploy:
+      resources:
+        limits:
+          memory: 8g
+        reservations:
+          memory: 4g
     depends_on:
       mlflow-tracking:
         condition: service_healthy

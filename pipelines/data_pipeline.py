@@ -20,7 +20,7 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 from utils.spark_session import create_spark_session, stop_spark_session
-from utils.spark_utils import save_dataframe, spark_to_pandas, get_dataframe_info, check_missing_values
+from utils.spark_utils import save_dataframe, spark_to_pandas, spark_stratified_split, get_dataframe_info, check_missing_values
 from src.data_ingestion import DataIngestorCSV
 from src.handling_missing_values import create_default_missing_value_pipeline
 from src.handling_outliers import create_outlier_pipeline
@@ -356,23 +356,36 @@ def data_pipeline(
         logger.info(f"DATA SPLITTING STEP")
         logger.info(f"{'='*80}")
         
-        # Convert preprocessed PySpark DataFrame to Pandas to maintain perfect row alignment
-        logger.info("Converting preprocessed PySpark DataFrame to Pandas to avoid row-mismatch during splitting...")
-        df_pd = spark_to_pandas(df)
-        
-        # Perform stratified split in Pandas
-        from sklearn.model_selection import train_test_split
-        logger.info(f"Performing stratified train/test split with test_size={test_size}...")
-        train_pd, test_pd = train_test_split(
-            df_pd, test_size=test_size, random_state=42, 
-            stratify=df_pd[target_column]
+        # ------------------------------------------------------------------ #
+        # Stratified split is performed entirely inside Spark (no toPandas   #
+        # on the full dataset).  Arrow's _collect_as_arrow buffers all rows  #
+        # in the JVM heap at once; on 1.8 M rows this kills the JVM process  #
+        # and cascades into BrokenPipeError / ConnectionRefusedError.         #
+        # Instead we split by class in Spark then only convert the resulting  #
+        # four smaller DataFrames to pandas.                                  #
+        # ------------------------------------------------------------------ #
+        logger.info(
+            "Performing stratified train/test split in Spark "
+            "(no full-dataset driver collection) ..."
         )
-        
-        X_train_pd = train_pd.drop(columns=[target_column])
-        Y_train_pd = train_pd[[target_column]]
-        X_test_pd = test_pd.drop(columns=[target_column])
-        Y_test_pd = test_pd[[target_column]]
-        
+        train_spark, test_spark = spark_stratified_split(
+            df, label_col=target_column, test_size=test_size, seed=42
+        )
+
+        # Separate features and label columns in Spark
+        X_train_spark = train_spark.drop(target_column)
+        Y_train_spark = train_spark.select(target_column)
+        X_test_spark  = test_spark.drop(target_column)
+        Y_test_spark  = test_spark.select(target_column)
+
+        # Convert each split to pandas (Arrow disabled inside spark_to_pandas
+        # to avoid the JVM OOM; row-by-row serialiser streams in chunks)
+        logger.info("Converting splits to pandas (row-by-row, Arrow disabled) ...")
+        X_train_pd = spark_to_pandas(X_train_spark)
+        Y_train_pd = spark_to_pandas(Y_train_spark)
+        X_test_pd  = spark_to_pandas(X_test_spark)
+        Y_test_pd  = spark_to_pandas(Y_test_spark)
+
         # Save processed data
         output_paths = save_processed_data(X_train_pd, X_test_pd, Y_train_pd, Y_test_pd, output_format)
         

@@ -58,8 +58,8 @@ def create_spark_session(
                                     .config("spark.sql.adaptive.coalescePartitions.enabled", "true") \
                                     .config("spark.sql.adaptive.skewJoin.enabled", "true") \
                                     .config("spark.sql.adaptive.localShuffleReader.enabled", "true") \
-                                    .config("spark.sql.execution.arrow.pyspark.enabled", "true") \
-                                    .config("spark.sql.execution.arrow.pyspark.fallback.enabled", "true") \
+                                    .config("spark.sql.execution.arrow.pyspark.enabled", "false") \
+                                    .config("spark.sql.execution.arrow.pyspark.fallback.enabled", "false") \
                                     .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer") \
                                     .config("spark.sql.shuffle.partitions", "200") \
                                     .config("spark.sql.parquet.compression.codec", "snappy") \
