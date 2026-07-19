@@ -622,22 +622,30 @@ def training_pipeline(
         with open(summary_path, 'w') as f:
             json.dump(training_summary, f, indent=2, default=str)
         
-        mlflow.log_artifact(summary_path, "training_summary")
-        
-        logger.info(f"\n{'='*80}")
-        logger.info(f"TRAINING PIPELINE COMPLETED SUCCESSFULLY")
-        logger.info(f"{'='*80}")
-        logger.info("✓ Training pipeline completed successfully!")
-        logger.info(f"  • Model Performance - Accuracy: {evaluation_results.get('accuracy', 0.0):.4%}")
-        logger.info(f"  • Model Performance - Precision: {evaluation_results.get('precision', 0.0):.4%}")
-        logger.info(f"  • Model Performance - Recall: {evaluation_results.get('recall', 0.0):.4%}")
-        logger.info(f"  • Model Performance - F1 Score: {evaluation_results.get('f1', 0.0):.4%}")
-        logger.info(f"  • Training Time: {training_time:.2f} seconds")
-        logger.info(f"  • Model saved to: {model_path}")
-        logger.info(f"  • Training samples: {len(X_train)}")
-        logger.info(f"  • Test samples: {len(X_test)}")
-        logger.info(f"  • Features used: {X_train.shape[1]}")
-        
+        # S3 Artifact Upload for Model Training Outputs
+        try:
+            from utils.config import force_s3_io
+            if force_s3_io():
+                from utils.s3_io import upload_file
+                timestamp = active_run_timestamp or os.environ.get('ACTIVE_RUN_TIMESTAMP')
+                prefix = f"artifacts/models/run_{timestamp}" if timestamp else "artifacts/models"
+                artifacts_to_upload = [
+                    model_path, metadata_path, summary_path, pr_curve_path
+                ]
+                if 'cm_path' in locals() and cm_path:
+                    artifacts_to_upload.append(cm_path)
+                if 'eval_path' in locals() and eval_path:
+                    artifacts_to_upload.append(eval_path)
+                    
+                for fpath in artifacts_to_upload:
+                    if fpath and os.path.exists(fpath):
+                        fname = os.path.basename(fpath)
+                        s3_key = f"{prefix}/{fname}"
+                        upload_file(fpath, key=s3_key)
+                logger.info(f"✓ Uploaded all model training artifacts to S3: s3://{prefix}/")
+        except Exception as se:
+            logger.warning(f"⚠️ Failed to upload training artifacts to S3: {se}")
+
         mlflow_tracker.end_run()
         
     except Exception as e:
