@@ -239,5 +239,5 @@ kafka:
 aws:
   region: "ap-south-1"  # REQUIRED: Change this to your AWS region (e.g., us-east-1, eu-west-1)
   s3_bucket: "credit-card-fraud-data-bucket"  # REQUIRED: Change this to your unique S3 bucket name
-  s3_kms_key_arn: "arn:aws:s3:::credit-card-fraud-data-bucket"  # OPTIONAL: Your KMS key ARN
+  s3_kms_key_arn: ""  # OPTIONAL: Your KMS key ARN
   force_s3_io: false  # Use local files for testing

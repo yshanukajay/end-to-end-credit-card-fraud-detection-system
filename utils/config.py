@@ -141,7 +141,14 @@ def get_s3_bucket() -> str:
 def get_s3_kms_arn() -> Optional[str]:
     """Get S3 KMS key ARN from config.yaml or environment variables"""
     aws_config = get_aws_config()
-    return aws_config['kms_key_arn']
+    kms_arn = aws_config.get('kms_key_arn')
+    if kms_arn and isinstance(kms_arn, str):
+        kms_arn = kms_arn.strip()
+        if kms_arn.startswith('arn:aws:kms:') or kms_arn.startswith('alias/'):
+            return kms_arn
+        elif kms_arn:
+            logger.warning(f"⚠️ Invalid KMS Key ARN provided ('{kms_arn}'). Disabling KMS SSE option for S3.")
+    return None
 
 
 def force_s3_io() -> bool:

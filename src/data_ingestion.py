@@ -86,19 +86,41 @@ class DataIngestor(ABC):
         pass
 
 
+from pyspark.sql.types import StructType, StructField, StringType, DoubleType, LongType, IntegerType
+
+FRAUD_DATASET_SCHEMA = StructType([
+    StructField("_c0", IntegerType(), True),
+    StructField("trans_date_trans_time", StringType(), True),
+    StructField("cc_num", LongType(), True),
+    StructField("merchant", StringType(), True),
+    StructField("category", StringType(), True),
+    StructField("amt", DoubleType(), True),
+    StructField("first", StringType(), True),
+    StructField("last", StringType(), True),
+    StructField("gender", StringType(), True),
+    StructField("street", StringType(), True),
+    StructField("city", StringType(), True),
+    StructField("state", StringType(), True),
+    StructField("zip", IntegerType(), True),
+    StructField("lat", DoubleType(), True),
+    StructField("long", DoubleType(), True),
+    StructField("city_pop", IntegerType(), True),
+    StructField("job", StringType(), True),
+    StructField("dob", StringType(), True),
+    StructField("trans_num", StringType(), True),
+    StructField("unix_time", LongType(), True),
+    StructField("merch_lat", DoubleType(), True),
+    StructField("merch_long", DoubleType(), True),
+    StructField("is_fraud", IntegerType(), True)
+])
+
+
 class DataIngestorCSV(DataIngestor):
-    """CSV data ingestion implementation."""
+    """CSV data ingestion implementation using PySpark."""
     
     def ingest(self, file_path_or_link: str, **options) -> DataFrame:
         """
-        Ingest CSV data using PySpark.
-        
-        Args:
-            file_path_or_link: Path to the CSV file
-            **options: Additional options for CSV reading
-            
-        Returns:
-            PySpark DataFrame
+        Ingest CSV file into PySpark DataFrame using explicit schema to avoid inferSchema memory pressure.
         """
         logger.info(f"\n{'='*60}")
         logger.info(f"DATA INGESTION - CSV (PySpark)")
@@ -106,25 +128,22 @@ class DataIngestorCSV(DataIngestor):
         logger.info(f"Starting CSV data ingestion from: {file_path_or_link}")
         
         try:
-            # Default CSV options
             csv_options = {
-                        "header": "true",
-                        "inferSchema": "true",
-                        "ignoreLeadingWhiteSpace": "true",
-                        "ignoreTrailingWhiteSpace": "true",
-                        "nullValue": "",
-                        "nanValue": "NaN",
-                        "escape": '"',
-                        "quote": '"'
-                        }
+                "header": "true",
+                "inferSchema": "false",
+                "ignoreLeadingWhiteSpace": "true",
+                "ignoreTrailingWhiteSpace": "true",
+                "nullValue": "",
+                "nanValue": "NaN",
+                "escape": '"',
+                "quote": '"'
+            }
             csv_options.update(options)
             
-            ############### PANDAS CODES ###########################
-            # df = pd.read_csv(file_path_or_link)
-            
-            ############### PYSPARK CODES ###########################
             file_path_or_link = self._configure_s3(file_path_or_link)
-            df = self.spark.read.options(**csv_options).csv(file_path_or_link)
+            
+            schema_to_use = options.pop("schema", FRAUD_DATASET_SCHEMA)
+            df = self.spark.read.schema(schema_to_use).options(**csv_options).csv(file_path_or_link)
             
             logger.info(f"✓ CSV data loaded successfully")
             logger.info(f"  • Rows: {df.count()}")

@@ -51,7 +51,7 @@ logger = logging.getLogger(__name__)
 
 def create_spark_session(
                         app_name: str = "CreditCardFraudDetectionPipeline",
-                        master: str = "local[*]",
+                        master: Optional[str] = None,
                         config_options: Optional[dict] = None
                         ) -> SparkSession:
     """
@@ -59,12 +59,13 @@ def create_spark_session(
     
     Args:
         app_name: Name of the Spark application
-        master: Spark master URL (default: local mode with all cores)
+        master: Spark master URL (default: local[4] mode to prevent oversubscribing container thread memory)
         config_options: Additional Spark configuration options
         
     Returns:
         SparkSession: Configured SparkSession instance
     """
+    master = master or os.getenv("SPARK_MASTER", "local[4]")
     try:
         # Determine extra JVM options (merge if existing in config_options)
         existing_driver_opts = config_options.get("spark.driver.extraJavaOptions") if config_options else None
@@ -77,7 +78,7 @@ def create_spark_session(
         builder = SparkSession.builder \
                                     .appName(app_name) \
                                     .master(master) \
-                                    .config("spark.driver.memory", "4g") \
+                                    .config("spark.driver.memory", "3g") \
                                     .config("spark.executor.memory", "2g") \
                                     .config("spark.driver.extraJavaOptions", driver_java_opts) \
                                     .config("spark.executor.extraJavaOptions", executor_java_opts) \

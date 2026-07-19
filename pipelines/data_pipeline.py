@@ -199,19 +199,30 @@ def data_pipeline(
     
     data_paths = get_data_paths()
     from utils.config import force_s3_io, get_s3_bucket
-    if run_timestamp is None and force_s3_io():
+    if run_timestamp is None:
         run_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
-        logger.info(f"S3 I/O is active. Automatically generated run timestamp: {run_timestamp}")
+        logger.info(f"Generated run timestamp: {run_timestamp}")
         
     if run_timestamp:
         os.environ['ACTIVE_RUN_TIMESTAMP'] = run_timestamp
         
-    if force_s3_io() and (data_path is None or not (data_path.startswith("s3://") or data_path.startswith("s3a://"))):
-        bucket = get_s3_bucket()
-        data_path = f"s3a://{bucket}/raw/fraudTrain.csv"
-        logger.info(f"S3 I/O is enabled. Defaulting to S3 raw dataset: {data_path}")
-    elif data_path is None:
-        data_path = os.path.join(PROJECT_ROOT, data_paths.get('raw_data', 'dataset/raw/fraudTrain.csv'))
+    if data_path is None:
+        local_default = os.path.join(PROJECT_ROOT, data_paths.get('raw_data', 'dataset/raw/fraudTrain.csv'))
+        if os.path.exists(local_default):
+            data_path = local_default
+            logger.info(f"Ingesting raw dataset from local path: {data_path}")
+        else:
+            try:
+                bucket = get_s3_bucket()
+                data_path = f"s3a://{bucket}/raw/fraudTrain.csv"
+                logger.info(f"Local raw dataset not found. Falling back to S3 dataset: {data_path}")
+            except Exception:
+                data_path = local_default
+    elif force_s3_io() and not (data_path.startswith("s3://") or data_path.startswith("s3a://")):
+        if not os.path.exists(data_path):
+            bucket = get_s3_bucket()
+            data_path = f"s3a://{bucket}/raw/fraudTrain.csv"
+            logger.info(f"Defaulting to S3 raw dataset: {data_path}")
         
     # Input validation
     if not data_path.startswith("s3://") and not data_path.startswith("s3a://"):
@@ -423,19 +434,14 @@ def data_pipeline(
             df, label_col=target_column, test_size=test_size, seed=42
         )
 
-        # Separate features and label columns in Spark
-        X_train_spark = train_spark.drop(target_column)
-        Y_train_spark = train_spark.select(target_column)
-        X_test_spark  = test_spark.drop(target_column)
-        Y_test_spark  = test_spark.select(target_column)
+        logger.info("Converting train and test splits to pandas...")
+        train_pd = spark_to_pandas(train_spark)
+        test_pd = spark_to_pandas(test_spark)
 
-        # Convert each split to pandas (Arrow disabled inside spark_to_pandas
-        # to avoid the JVM OOM; row-by-row serialiser streams in chunks)
-        logger.info("Converting splits to pandas (row-by-row, Arrow disabled) ...")
-        X_train_pd = spark_to_pandas(X_train_spark)
-        Y_train_pd = spark_to_pandas(Y_train_spark)
-        X_test_pd  = spark_to_pandas(X_test_spark)
-        Y_test_pd  = spark_to_pandas(Y_test_spark)
+        X_train_pd = train_pd.drop(columns=[target_column])
+        Y_train_pd = train_pd[[target_column]]
+        X_test_pd  = test_pd.drop(columns=[target_column])
+        Y_test_pd  = test_pd[[target_column]]
 
         # Save processed data
         output_paths = save_processed_data(X_train_pd, X_test_pd, Y_train_pd, Y_test_pd, output_format, run_timestamp=run_timestamp)

@@ -143,6 +143,7 @@ class NominalEncodingStrategy(FeatureEncodingStrategy):
             try:
                 from utils.config import force_s3_io
                 if force_s3_io():
+                    from utils.s3_io import upload_file
                     timestamp = os.environ.get('ACTIVE_RUN_TIMESTAMP')
                     if timestamp:
                         s3_key = f"artifacts/encode/run_{timestamp}/{column}_encoder.json"

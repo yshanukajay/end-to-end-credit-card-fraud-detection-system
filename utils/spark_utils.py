@@ -150,24 +150,15 @@ def spark_stratified_split(
             f"Stratified split: {len(classes)} class(es) detected in '{label_col}'"
         )
 
-        train_dfs: List[DataFrame] = []
-        test_dfs: List[DataFrame] = []
+        train_fractions = {cls_val: train_size for cls_val in classes}
+        test_fractions = {cls_val: test_size for cls_val in classes}
 
-        for cls_val in classes:
-            cls_df = df.filter(F.col(label_col) == cls_val)
-            train_cls, test_cls = cls_df.randomSplit(
-                [train_size, test_size], seed=seed
-            )
-            train_dfs.append(train_cls)
-            test_dfs.append(test_cls)
-
-        train_df = _functools_reduce(lambda a, b: a.union(b), train_dfs)
-        test_df = _functools_reduce(lambda a, b: a.union(b), test_dfs)
+        train_df = df.sampleBy(label_col, fractions=train_fractions, seed=seed)
+        test_df = df.sampleBy(label_col, fractions=test_fractions, seed=seed + 100)
 
         logger.info(
             f"✓ Stratified split complete "
-            f"(test_size={test_size}, seed={seed}): "
-            f"train≈{train_df.count()}, test≈{test_df.count()} rows"
+            f"(test_size={test_size}, seed={seed})"
         )
         return train_df, test_df
 
