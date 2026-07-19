@@ -2,6 +2,9 @@
 Common PySpark utility functions for data processing and transformation.
 """
 
+import os
+import uuid
+import shutil
 import logging
 from functools import reduce as _functools_reduce
 from typing import List, Dict, Optional, Union, Tuple
@@ -10,25 +13,27 @@ from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, DoubleType, BooleanType
 
+# Resolve project root relative to this file
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+
 logger = logging.getLogger(__name__)
 
 
-def spark_to_pandas(df: DataFrame, max_records: Optional[int] = None) -> pd.DataFrame:
+def spark_to_pandas(
+    df: DataFrame,
+    max_records: Optional[int] = None,
+    use_arrow: bool = True
+) -> pd.DataFrame:
     """
-    Convert PySpark DataFrame to pandas DataFrame safely.
-
-    Arrow's ``_collect_as_arrow`` buffers ALL rows in the JVM heap before
-    transmitting them to Python.  On large DataFrames (≥ 1 M rows) this
-    triggers an OOM inside the JVM worker, which kills the Py4J socket and
-    produces a cascade of ``BrokenPipeError`` / ``ConnectionRefusedError``.
-
-    To avoid this we **always disable Arrow** for driver-side collection and
-    use PySpark's row-by-row serialiser, which streams data in small chunks
-    and never requires a single contiguous JVM buffer.
+    Convert PySpark DataFrame to pandas DataFrame safely and efficiently.
+    For large datasets (>= 10,000 rows), this uses a temporary Parquet file swap on disk
+    to bypass JVM memory limits, Py4J serialization overhead, and connection timeouts.
+    For small datasets, it falls back to standard Spark toPandas() with Arrow enabled.
     
     Args:
         df: PySpark DataFrame
         max_records: Maximum number of records to convert (for safety)
+        use_arrow: Toggle Arrow-based conversion.
         
     Returns:
         pandas DataFrame
@@ -37,25 +42,70 @@ def spark_to_pandas(df: DataFrame, max_records: Optional[int] = None) -> pd.Data
         if max_records:
             df = df.limit(max_records)
         
+        # Determine if the dataset is large enough to benefit from disk swap (limit check is fast)
+        is_large = df.limit(10001).count() > 10000
+        
+        if is_large:
+            logger.info("DataFrame is large. Using high-performance disk swap (Parquet) to prevent JVM OOM...")
+            swap_base_dir = os.path.join(PROJECT_ROOT, 'artifacts', 'data', 'temp_pandas_swap')
+            os.makedirs(swap_base_dir, exist_ok=True)
+            unique_id = f"swap_{uuid.uuid4().hex}"
+            temp_dir = os.path.join(swap_base_dir, unique_id)
+            
+            # Format file URI correctly for Spark
+            abs_path = os.path.abspath(temp_dir)
+            abs_path_normalized = abs_path.replace("\\", "/")
+            if not abs_path_normalized.startswith("/"):
+                spark_path = f"file:///{abs_path_normalized}"
+            else:
+                spark_path = f"file://{abs_path_normalized}"
+                
+            try:
+                df.write.mode("overwrite").parquet(spark_path)
+                pandas_df = pd.read_parquet(temp_dir)
+                logger.info(f"✓ Converted large PySpark DataFrame to pandas via disk swap: {pandas_df.shape}")
+                return pandas_df
+            except Exception as swap_err:
+                logger.warning(
+                    f"⚠️ Disk-swap conversion failed: {swap_err}. "
+                    "Attempting in-memory fallback to standard toPandas()..."
+                )
+            finally:
+                if os.path.exists(temp_dir):
+                    try:
+                        shutil.rmtree(temp_dir)
+                    except Exception as cleanup_err:
+                        logger.warning(f"Could not clean up temp directory {temp_dir}: {cleanup_err}")
+        
+        # Standard fallback / small DataFrame path
         spark = df.sparkSession
-
-        # Remember the original Arrow setting so we can restore it afterwards
         arrow_was_enabled = spark.conf.get(
-            "spark.sql.execution.arrow.pyspark.enabled", "false"
+            "spark.sql.execution.arrow.pyspark.enabled", "true"
         )
-
-        # Pre-disable Arrow BEFORE calling toPandas to prevent the JVM from
-        # attempting to materialise all rows in one Arrow batch.
-        spark.conf.set("spark.sql.execution.arrow.pyspark.enabled", "false")
+        arrow_setting = "true" if use_arrow else "false"
+        spark.conf.set("spark.sql.execution.arrow.pyspark.enabled", arrow_setting)
+        spark.conf.set("spark.sql.execution.arrow.pyspark.fallback.enabled", "true")
+        spark.conf.set("spark.sql.execution.arrow.maxRecordsPerBatch", "10000")
+        
         try:
-            pandas_df = df.toPandas()  # row-by-row (safe for large DataFrames)
+            pandas_df = df.toPandas()
+        except Exception as arrow_err:
+            err_msg = str(arrow_err)
+            if any(term in err_msg for term in ["Unsafe", "DirectByteBuffer", "MemoryUtil", "UnsupportedOperationException", "Arrow"]):
+                logger.warning(
+                    f"⚠️ Arrow conversion failed due to JVM memory access restrictions: {err_msg}. "
+                    "Falling back to spark.sql.execution.arrow.pyspark.enabled=false..."
+                )
+                spark.conf.set("spark.sql.execution.arrow.pyspark.enabled", "false")
+                pandas_df = df.toPandas()
+            else:
+                raise
         finally:
-            # Always restore the original Arrow setting
             spark.conf.set(
                 "spark.sql.execution.arrow.pyspark.enabled", arrow_was_enabled
             )
-        
-        logger.info(f"✓ Converted PySpark DataFrame to pandas: {pandas_df.shape}")
+            
+        logger.info(f"✓ Converted small PySpark DataFrame to pandas: {pandas_df.shape} (use_arrow={use_arrow})")
         return pandas_df
         
     except Exception as e:

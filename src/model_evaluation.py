@@ -44,6 +44,7 @@ class ModelEvaluator:
         
         if self.is_spark:
             from pyspark.sql import DataFrame
+            from utils.spark_utils import spark_to_pandas
             logger.info("Evaluating using PySpark MLlib...")
             
             # Recombine features X_test and target Y_test if they are separate Spark DataFrames
@@ -63,7 +64,7 @@ class ModelEvaluator:
             predictions_df = self.model.transform(test_df)
             
             # Convert only prediction and target columns to Pandas for metrics
-            pdf = predictions_df.select(target_col, "prediction", "probability").toPandas()
+            pdf = spark_to_pandas(predictions_df.select(target_col, "prediction", "probability"))
             Y_test_vals = pdf[target_col].values
             Y_pred = pdf["prediction"].values
             Y_proba = np.array([float(val[1]) for val in pdf["probability"]])

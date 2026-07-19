@@ -6,25 +6,45 @@ Provides consistent Spark configuration across all modules.
 import os
 import sys
 import logging
-from typing import Optional
+from typing import Optional, List
 from pyspark.sql import SparkSession
 
 # Ensure correct python workers are launched using the current python executable
 os.environ["PYSPARK_PYTHON"] = sys.executable
 os.environ["PYSPARK_DRIVER_PYTHON"] = sys.executable
 
-# Add modular open-packages options for Java 17+ / Java 21 compatibility with PyArrow/PySpark
-if "JDK_JAVA_OPTIONS" not in os.environ:
-    os.environ["JDK_JAVA_OPTIONS"] = (
-        "--add-opens=java.base/java.nio=ALL-UNNAMED "
-        "--add-opens=java.base/java.net=ALL-UNNAMED "
-        "--add-opens=java.base/java.lang=ALL-UNNAMED "
-        "--add-opens=java.base/java.util=ALL-UNNAMED "
-        "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED "
-        "--add-opens=java.base/java.text=ALL-UNNAMED "
-        "--add-opens=java.base/java.util.regex=ALL-UNNAMED "
-        "--add-opens=java.base/java.io=ALL-UNNAMED"
-    )
+# Modular open-packages options for Java 17+ / Java 21 compatibility with PyArrow/PySpark
+REQUIRED_JAVA_OPTS = [
+    "--add-opens=java.base/java.nio=ALL-UNNAMED",
+    "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED",
+    "--add-opens=java.base/sun.misc=ALL-UNNAMED",
+    "--add-opens=java.base/java.net=ALL-UNNAMED",
+    "--add-opens=java.base/java.lang=ALL-UNNAMED",
+    "--add-opens=java.base/java.util=ALL-UNNAMED",
+    "--add-opens=java.base/java.util.concurrent=ALL-UNNAMED",
+    "--add-opens=java.base/java.text=ALL-UNNAMED",
+    "--add-opens=java.base/java.util.regex=ALL-UNNAMED",
+    "--add-opens=java.base/java.io=ALL-UNNAMED",
+]
+
+
+def _merge_java_options(existing: Optional[str], required_opts: List[str]) -> str:
+    """Merge required JVM options with existing options without duplication."""
+    if not existing:
+        return " ".join(required_opts)
+    tokens = set(existing.split())
+    for opt in required_opts:
+        tokens.add(opt)
+    return " ".join(sorted(tokens))
+
+
+# Set/merge JDK_JAVA_OPTIONS and JAVA_TOOL_OPTIONS environment variables
+os.environ["JDK_JAVA_OPTIONS"] = _merge_java_options(
+    os.environ.get("JDK_JAVA_OPTIONS"), REQUIRED_JAVA_OPTS
+)
+os.environ["JAVA_TOOL_OPTIONS"] = _merge_java_options(
+    os.environ.get("JAVA_TOOL_OPTIONS"), REQUIRED_JAVA_OPTS
+)
 
 logger = logging.getLogger(__name__)
 
@@ -46,20 +66,30 @@ def create_spark_session(
         SparkSession: Configured SparkSession instance
     """
     try:
+        # Determine extra JVM options (merge if existing in config_options)
+        existing_driver_opts = config_options.get("spark.driver.extraJavaOptions") if config_options else None
+        existing_executor_opts = config_options.get("spark.executor.extraJavaOptions") if config_options else None
+
+        driver_java_opts = _merge_java_options(existing_driver_opts, REQUIRED_JAVA_OPTS)
+        executor_java_opts = _merge_java_options(existing_executor_opts, REQUIRED_JAVA_OPTS)
+
         # Base configuration for optimal performance
         builder = SparkSession.builder \
                                     .appName(app_name) \
                                     .master(master) \
                                     .config("spark.driver.memory", "4g") \
-                                    .config("spark.executor.memory", "4g") \
+                                    .config("spark.executor.memory", "2g") \
+                                    .config("spark.driver.extraJavaOptions", driver_java_opts) \
+                                    .config("spark.executor.extraJavaOptions", executor_java_opts) \
                                     .config("spark.network.timeout", "800s") \
                                     .config("spark.executor.heartbeatInterval", "60s") \
                                     .config("spark.sql.adaptive.enabled", "true") \
                                     .config("spark.sql.adaptive.coalescePartitions.enabled", "true") \
                                     .config("spark.sql.adaptive.skewJoin.enabled", "true") \
                                     .config("spark.sql.adaptive.localShuffleReader.enabled", "true") \
-                                    .config("spark.sql.execution.arrow.pyspark.enabled", "false") \
-                                    .config("spark.sql.execution.arrow.pyspark.fallback.enabled", "false") \
+                                    .config("spark.sql.execution.arrow.pyspark.enabled", "true") \
+                                    .config("spark.sql.execution.arrow.pyspark.fallback.enabled", "true") \
+                                    .config("spark.sql.execution.arrow.maxRecordsPerBatch", "10000") \
                                     .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer") \
                                     .config("spark.sql.shuffle.partitions", "200") \
                                     .config("spark.sql.parquet.compression.codec", "snappy") \

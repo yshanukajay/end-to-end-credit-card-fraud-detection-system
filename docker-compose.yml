@@ -17,6 +17,7 @@ services:
       - AWS_CONFIG_FILE=/home/appuser/.aws/config
       - MLFLOW_BACKEND_STORE_URI=sqlite:///mlflow.db
       - MLFLOW_DEFAULT_ARTIFACT_ROOT=s3://${S3_BUCKET}/mlflow-artifacts
+      - MLFLOW_SERVER_ALLOWED_HOSTS=*
     volumes:
       - mlflow_data:/tmp/mlruns
       - ~/.aws:/aws:ro
@@ -38,7 +39,7 @@ services:
       - S3_BUCKET=${S3_BUCKET}
       - AWS_REGION=${AWS_REGION:-us-east-1}
       - MLFLOW_TRACKING_URI=http://mlflow-tracking:5001
-      - JAVA_TOOL_OPTIONS=--add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/java.net=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.util.concurrent=ALL-UNNAMED --add-opens=java.base/java.text=ALL-UNNAMED --add-opens=java.base/java.util.regex=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED
+      - JAVA_TOOL_OPTIONS=--add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/sun.misc=ALL-UNNAMED --add-opens=java.base/java.net=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.util.concurrent=ALL-UNNAMED --add-opens=java.base/java.text=ALL-UNNAMED --add-opens=java.base/java.util.regex=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED
     volumes:
       - ~/.aws:/aws:ro
       - ./dataset:/opt/app/dataset
@@ -62,7 +63,7 @@ services:
       - S3_BUCKET=${S3_BUCKET}
       - AWS_REGION=${AWS_REGION:-us-east-1}
       - MLFLOW_TRACKING_URI=http://mlflow-tracking:5001
-      - JAVA_TOOL_OPTIONS=--add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/java.net=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.util.concurrent=ALL-UNNAMED --add-opens=java.base/java.text=ALL-UNNAMED --add-opens=java.base/java.util.regex=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED
+      - JAVA_TOOL_OPTIONS=--add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/sun.misc=ALL-UNNAMED --add-opens=java.base/java.net=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.util.concurrent=ALL-UNNAMED --add-opens=java.base/java.text=ALL-UNNAMED --add-opens=java.base/java.util.regex=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED
     volumes:
       - ~/.aws:/aws:ro
       - ./dataset:/opt/app/dataset
@@ -80,7 +81,7 @@ services:
       - S3_BUCKET=${S3_BUCKET}
       - AWS_REGION=${AWS_REGION:-us-east-1}
       - MLFLOW_TRACKING_URI=http://mlflow-tracking:5001
-      - JAVA_TOOL_OPTIONS=--add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/java.net=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.util.concurrent=ALL-UNNAMED --add-opens=java.base/java.text=ALL-UNNAMED --add-opens=java.base/java.util.regex=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED
+      - JAVA_TOOL_OPTIONS=--add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/sun.misc=ALL-UNNAMED --add-opens=java.base/java.net=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.util.concurrent=ALL-UNNAMED --add-opens=java.base/java.text=ALL-UNNAMED --add-opens=java.base/java.util.regex=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED
     volumes:
       - ~/.aws:/aws:ro
       - ./dataset:/opt/app/dataset

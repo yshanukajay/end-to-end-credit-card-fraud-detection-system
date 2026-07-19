@@ -6,7 +6,7 @@ SHELL := /usr/bin/env bash
          kafka-producer-stream kafka-producer-batch kafka-consumer kafka-consumer-continuous \
          kafka-check kafka-monitor kafka-sample-scored kafka-reset kafka-help \
          airflow-init airflow-start airflow-kill airflow-reset \
-         docker-build docker-up docker-down docker-data-pipeline docker-model-pipeline docker-inference-pipeline docker-run-all docker-status \
+         docker-build docker-build-no-cache docker-up docker-down docker-stop docker-stop-all docker-data-pipeline docker-model-pipeline docker-inference-pipeline docker-run-all docker-status \
          s3-upload-data s3-list s3-clean s3-delete-prefix s3-smoke
 
 # Default Python interpreter
@@ -110,8 +110,10 @@ help:
 	@echo ""
 	@echo "🐳 Docker Services Commands:"
 	@echo "  make docker-build        - Build all Docker images"
+	@echo "  make docker-build-no-cache - Build all Docker images without cache"
 	@echo "  make docker-up           - Start all Docker services"
 	@echo "  make docker-down         - Stop all Docker services"
+	@echo "  make docker-stop-all     - Stop all running Docker containers"
 	@echo "  make docker-data-pipeline    - Run data pipeline in Docker"
 	@echo "  make docker-model-pipeline   - Run model pipeline in Docker"
 	@echo "  make docker-inference-pipeline - Run inference pipeline in Docker"
@@ -472,6 +474,10 @@ docker-build:
 	@echo "🐳 Building all Docker images..."
 	docker compose build
 
+docker-build-no-cache:
+	@echo "🐳 Building all Docker images without cache..."
+	docker compose build --no-cache
+
 docker-up:
 	@echo "🐳 Starting all Docker services..."
 	docker compose up -d mlflow-tracking
@@ -479,6 +485,12 @@ docker-up:
 docker-down:
 	@echo "🐳 Stopping all Docker services..."
 	docker compose down
+
+docker-stop-all:
+	@echo "🛑 Stopping all running Docker containers..."
+	@python -c "import subprocess; ids = [i for i in subprocess.check_output(['docker', 'ps', '-q']).decode().split() if i]; (subprocess.run(['docker', 'stop'] + ids) if ids else print('No running containers found.'))"
+
+docker-stop: docker-stop-all
 
 docker-data-pipeline:
 	@echo "🐳 Running data pipeline in Docker..."

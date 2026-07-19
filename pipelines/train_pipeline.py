@@ -191,7 +191,7 @@ def training_pipeline(
             # Tune threshold on validation set
             logger.info("Tuning decision threshold on validation set...")
             val_predictions = fitted_model.transform(val_spark_df)
-            val_probs_pdf = val_predictions.select("is_fraud", "probability").toPandas()
+            val_probs_pdf = spark_to_pandas(val_predictions.select("is_fraud", "probability"))
             val_probs = np.array([float(p[1]) for p in val_probs_pdf["probability"]])
             y_val = val_probs_pdf["is_fraud"].values
             
@@ -202,7 +202,7 @@ def training_pipeline(
             
             logger.info("Evaluating model performance on test set using optimized threshold...")
             test_predictions = fitted_model.transform(test_spark_full)
-            test_probs_pdf = test_predictions.select("is_fraud", "probability").toPandas()
+            test_probs_pdf = spark_to_pandas(test_predictions.select("is_fraud", "probability"))
             test_probs = np.array([float(p[1]) for p in test_probs_pdf["probability"]])
             y_test_s = test_probs_pdf["is_fraud"].values
             

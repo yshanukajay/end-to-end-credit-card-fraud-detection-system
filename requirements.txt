@@ -48,6 +48,10 @@ plotly>=5.11.0
 pyyaml>=6.0.1
 # Python-dotenv: Version 1.0.0+ is fully compatible with Python 3.11.
 python-dotenv>=1.0.0
+# AWS SDK for Python (required for S3 storage integrations and checks)
+boto3>=1.26.0
+botocore>=1.29.0
+
 
 # ------------------------------------------------------------------------------
 # Topic 6: Data Processing (Excel & Spreadsheet I/O)

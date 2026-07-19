@@ -9,8 +9,8 @@ mkdir -p "$HOME/.cache" "$HOME/.ivy2" "$HOME/.config" "$SPARK_LOCAL_DIRS" /tmp/h
 # Extract AWS credentials from mounted file and export as environment variables
 if [ -f "/aws/credentials" ]; then
     echo "🔑 Setting up AWS credentials for Spark S3A..."
-    export AWS_ACCESS_KEY_ID=$(grep -A 10 "^\[default\]" /aws/credentials | grep "aws_access_key_id" | cut -d'=' -f2 | tr -d ' ')
-    export AWS_SECRET_ACCESS_KEY=$(grep -A 10 "^\[default\]" /aws/credentials | grep "aws_secret_access_key" | cut -d'=' -f2 | tr -d ' ')
+    export AWS_ACCESS_KEY_ID=$(grep -A 10 "^\[default\]" /aws/credentials | grep "aws_access_key_id" | cut -d'=' -f2 | tr -d ' \r')
+    export AWS_SECRET_ACCESS_KEY=$(grep -A 10 "^\[default\]" /aws/credentials | grep "aws_secret_access_key" | cut -d'=' -f2 | tr -d ' \r')
     echo "✅ AWS credentials extracted for Spark"
 else
     echo "⚠️ AWS credentials file not found at /aws/credentials"
@@ -42,8 +42,8 @@ spark.hadoop.fs.s3a.fast.upload=true
 spark.hadoop.fs.s3a.multipart.size=67108864
 spark.hadoop.fs.s3a.connection.timeout=60000
 spark.hadoop.fs.s3a.socket.timeout=60000
-# JARs are downloaded by PySpark automatically via spark.jars.packages
-# No need to specify spark.jars path
+spark.driver.extraJavaOptions=--add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/sun.misc=ALL-UNNAMED --add-opens=java.base/java.net=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.util.concurrent=ALL-UNNAMED --add-opens=java.base/java.text=ALL-UNNAMED --add-opens=java.base/java.util.regex=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED
+spark.executor.extraJavaOptions=--add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/sun.misc=ALL-UNNAMED --add-opens=java.base/java.net=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.util.concurrent=ALL-UNNAMED --add-opens=java.base/java.text=ALL-UNNAMED --add-opens=java.base/java.util.regex=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED
 EOF
 
 echo "🔧 Spark S3A configuration completed"

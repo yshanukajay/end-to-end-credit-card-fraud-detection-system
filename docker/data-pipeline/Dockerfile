@@ -23,10 +23,8 @@ RUN groupadd --system --gid $GID app \
 WORKDIR /opt/app
 
 # Copy requirements and install Python dependencies
-# Use the slim data-pipeline requirements (excludes WandB/Airflow/Jupyter/Kafka)
-# which avoids pulling nvidia_nccl_cu12 (303 MB CUDA wheel) that times out.
-COPY requirements-data-pipeline.txt .
-RUN pip install --no-cache-dir --timeout 120 --retries 5 -r requirements-data-pipeline.txt
+COPY requirements.txt .
+RUN pip install --no-cache-dir --timeout 120 --retries 5 -r requirements.txt
 
 # Copy project source code with proper ownership
 COPY --chown=appuser:app src/ ./src/
@@ -44,6 +42,8 @@ USER appuser
 # Environment variables (consolidated)
 ENV HOME=/home/appuser \
     JAVA_HOME=/usr/lib/jvm/default-java \
+    JAVA_TOOL_OPTIONS="--add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/sun.misc=ALL-UNNAMED --add-opens=java.base/java.net=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.util.concurrent=ALL-UNNAMED --add-opens=java.base/java.text=ALL-UNNAMED --add-opens=java.base/java.util.regex=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED" \
+    JDK_JAVA_OPTIONS="--add-opens=java.base/java.nio=ALL-UNNAMED --add-opens=java.base/sun.nio.ch=ALL-UNNAMED --add-opens=java.base/sun.misc=ALL-UNNAMED --add-opens=java.base/java.net=ALL-UNNAMED --add-opens=java.base/java.lang=ALL-UNNAMED --add-opens=java.base/java.util=ALL-UNNAMED --add-opens=java.base/java.util.concurrent=ALL-UNNAMED --add-opens=java.base/java.text=ALL-UNNAMED --add-opens=java.base/java.util.regex=ALL-UNNAMED --add-opens=java.base/java.io=ALL-UNNAMED" \
     SPARK_LOCAL_DIRS=/tmp/spark \
     HADOOP_OPTS="-Djava.io.tmpdir=/tmp/hadoop" \
     PYTHONUNBUFFERED=1 \
