@@ -2,7 +2,8 @@ import os
 import sys
 import logging
 import json
-from typing import Dict, Optional, List, Tuple
+import datetime
+from typing import Dict, Optional, List, Tuple, Any
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -74,7 +75,8 @@ def save_processed_data(
     X_test_pd: pd.DataFrame, 
     Y_train_pd: pd.DataFrame, 
     Y_test_pd: pd.DataFrame,
-    output_format: str = "both"
+    output_format: str = "both",
+    run_timestamp: Optional[str] = None
 ) -> Dict[str, str]:
     """
     Save processed data in specified format(s) including NPZ compatibility format.
@@ -82,21 +84,32 @@ def save_processed_data(
     Args:
         X_train_pd, X_test_pd, Y_train_pd, Y_test_pd: pandas DataFrames
         output_format: "csv", "parquet", or "both"
+        run_timestamp: Optional run timestamp for subdirectory organization
         
     Returns:
         Dictionary of output paths
     """
-    data_dir = os.path.join(PROJECT_ROOT, 'artifacts/data')
+    if run_timestamp:
+        data_dir = os.path.join(PROJECT_ROOT, 'artifacts', 'data', f"run_{run_timestamp}")
+    else:
+        data_dir = os.path.join(PROJECT_ROOT, 'artifacts', 'data')
     os.makedirs(data_dir, exist_ok=True)
     paths = {}
     
     # Retrieve configurations for NPZ output paths
     data_paths = get_data_paths()
-    x_train_npz = os.path.join(PROJECT_ROOT, data_paths.get('X_train', 'artifacts/data/credit_card_fraud_X_train.npz'))
-    x_test_npz  = os.path.join(PROJECT_ROOT, data_paths.get('X_test', 'artifacts/data/credit_card_fraud_X_test.npz'))
-    y_train_npz = os.path.join(PROJECT_ROOT, data_paths.get('Y_train', 'artifacts/data/credit_card_fraud_y_train.npz'))
-    y_test_npz  = os.path.join(PROJECT_ROOT, data_paths.get('Y_test', 'artifacts/data/credit_card_fraud_y_test.npz'))
-    features_json_path = os.path.join(PROJECT_ROOT, data_paths.get('data_artifacts_dir', 'artifacts/data'), 'features.json')
+    if run_timestamp:
+        x_train_npz = os.path.join(data_dir, 'credit_card_fraud_X_train.npz')
+        x_test_npz  = os.path.join(data_dir, 'credit_card_fraud_X_test.npz')
+        y_train_npz = os.path.join(data_dir, 'credit_card_fraud_y_train.npz')
+        y_test_npz  = os.path.join(data_dir, 'credit_card_fraud_y_test.npz')
+        features_json_path = os.path.join(data_dir, 'features.json')
+    else:
+        x_train_npz = os.path.join(PROJECT_ROOT, data_paths.get('X_train', 'artifacts/data/credit_card_fraud_X_train.npz'))
+        x_test_npz  = os.path.join(PROJECT_ROOT, data_paths.get('X_test', 'artifacts/data/credit_card_fraud_X_test.npz'))
+        y_train_npz = os.path.join(PROJECT_ROOT, data_paths.get('Y_train', 'artifacts/data/credit_card_fraud_y_train.npz'))
+        y_test_npz  = os.path.join(PROJECT_ROOT, data_paths.get('Y_test', 'artifacts/data/credit_card_fraud_y_test.npz'))
+        features_json_path = os.path.join(PROJECT_ROOT, data_paths.get('data_artifacts_dir', 'artifacts/data'), 'features.json')
     
     # Save NPZ files for scikit-learn model training compatibility
     logger.info("Saving compatibility NPZ files...")
@@ -163,8 +176,9 @@ def data_pipeline(
     target_column: str = 'is_fraud',
     test_size: float = 0.2,
     force_rebuild: bool = False,
-    output_format: str = "both"
-) -> Dict[str, np.ndarray]:
+    output_format: str = "both",
+    run_timestamp: Optional[str] = None
+) -> Dict[str, Any]:
     """
     Execute comprehensive credit card fraud data processing pipeline with PySpark and MLflow tracking.
     
@@ -174,16 +188,29 @@ def data_pipeline(
         test_size: Proportion of data to use for testing
         force_rebuild: Whether to force rebuild of existing artifacts
         output_format: Output format - "csv", "parquet", or "both"
+        run_timestamp: Optional run timestamp for organizing output directory
         
     Returns:
-        Dictionary containing processed train/test splits as numpy arrays
+        Dictionary containing processed train/test splits as numpy arrays and data_paths dict
     """
     logger.info(f"\n{'='*80}")
     logger.info(f"STARTING PYSPARK DATA PIPELINE")
     logger.info(f"{'='*80}")
     
     data_paths = get_data_paths()
-    if data_path is None:
+    from utils.config import force_s3_io, get_s3_bucket
+    if run_timestamp is None and force_s3_io():
+        run_timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        logger.info(f"S3 I/O is active. Automatically generated run timestamp: {run_timestamp}")
+        
+    if run_timestamp:
+        os.environ['ACTIVE_RUN_TIMESTAMP'] = run_timestamp
+        
+    if force_s3_io() and (data_path is None or not (data_path.startswith("s3://") or data_path.startswith("s3a://"))):
+        bucket = get_s3_bucket()
+        data_path = f"s3a://{bucket}/raw/fraudTrain.csv"
+        logger.info(f"S3 I/O is enabled. Defaulting to S3 raw dataset: {data_path}")
+    elif data_path is None:
         data_path = os.path.join(PROJECT_ROOT, data_paths.get('raw_data', 'dataset/raw/fraudTrain.csv'))
         
     # Input validation
@@ -227,11 +254,19 @@ def data_pipeline(
             run = mlflow_tracker.start_run(run_name='data_pipeline_pyspark', tags=run_tags)
         
         # Check for existing artifacts (NPZ format for compatibility)
-        x_train_npz = os.path.join(PROJECT_ROOT, data_paths.get('X_train', 'artifacts/data/credit_card_fraud_X_train.npz'))
-        x_test_npz  = os.path.join(PROJECT_ROOT, data_paths.get('X_test', 'artifacts/data/credit_card_fraud_X_test.npz'))
-        y_train_npz = os.path.join(PROJECT_ROOT, data_paths.get('Y_train', 'artifacts/data/credit_card_fraud_y_train.npz'))
-        y_test_npz  = os.path.join(PROJECT_ROOT, data_paths.get('Y_test', 'artifacts/data/credit_card_fraud_y_test.npz'))
-        features_json_path = os.path.join(PROJECT_ROOT, data_paths.get('data_artifacts_dir', 'artifacts/data'), 'features.json')
+        if run_timestamp:
+            data_dir = os.path.join(PROJECT_ROOT, 'artifacts', 'data', f"run_{run_timestamp}")
+            x_train_npz = os.path.join(data_dir, 'credit_card_fraud_X_train.npz')
+            x_test_npz  = os.path.join(data_dir, 'credit_card_fraud_X_test.npz')
+            y_train_npz = os.path.join(data_dir, 'credit_card_fraud_y_train.npz')
+            y_test_npz  = os.path.join(data_dir, 'credit_card_fraud_y_test.npz')
+            features_json_path = os.path.join(data_dir, 'features.json')
+        else:
+            x_train_npz = os.path.join(PROJECT_ROOT, data_paths.get('X_train', 'artifacts/data/credit_card_fraud_X_train.npz'))
+            x_test_npz  = os.path.join(PROJECT_ROOT, data_paths.get('X_test', 'artifacts/data/credit_card_fraud_X_test.npz'))
+            y_train_npz = os.path.join(PROJECT_ROOT, data_paths.get('Y_train', 'artifacts/data/credit_card_fraud_y_train.npz'))
+            y_test_npz  = os.path.join(PROJECT_ROOT, data_paths.get('Y_test', 'artifacts/data/credit_card_fraud_y_test.npz'))
+            features_json_path = os.path.join(PROJECT_ROOT, data_paths.get('data_artifacts_dir', 'artifacts/data'), 'features.json')
         
         artifacts_exist = all(os.path.exists(p) for p in [x_train_npz, x_test_npz, y_train_npz, y_test_npz, features_json_path])
         
@@ -251,12 +286,28 @@ def data_pipeline(
                 })
                 mlflow_tracker.end_run()
             
+            output_paths = {
+                'X_train_npz': x_train_npz,
+                'X_test_npz': x_test_npz,
+                'Y_train_npz': y_train_npz,
+                'Y_test_npz': y_test_npz,
+                'features_json': features_json_path,
+                'X_train_parquet': os.path.join(os.path.dirname(x_train_npz), 'X_train.parquet'),
+                'X_test_parquet': os.path.join(os.path.dirname(x_test_npz), 'X_test.parquet'),
+                'Y_train_parquet': os.path.join(os.path.dirname(y_train_npz), 'Y_train.parquet'),
+                'Y_test_parquet': os.path.join(os.path.dirname(y_test_npz), 'Y_test.parquet'),
+                'X_train_csv': os.path.join(os.path.dirname(x_train_npz), 'X_train.csv'),
+                'X_test_csv': os.path.join(os.path.dirname(x_test_npz), 'X_test.csv'),
+                'Y_train_csv': os.path.join(os.path.dirname(y_train_npz), 'Y_train.csv'),
+                'Y_test_csv': os.path.join(os.path.dirname(y_test_npz), 'Y_test.csv'),
+            }
             logger.info("✓ Data pipeline completed using existing artifacts")
             return {
                 'X_train': X_train,
                 'X_test': X_test,
                 'Y_train': Y_train,
-                'Y_test': Y_test
+                'Y_test': Y_test,
+                'data_paths': output_paths
             }
         
         # Process data from scratch with PySpark
@@ -387,7 +438,7 @@ def data_pipeline(
         Y_test_pd  = spark_to_pandas(Y_test_spark)
 
         # Save processed data
-        output_paths = save_processed_data(X_train_pd, X_test_pd, Y_train_pd, Y_test_pd, output_format)
+        output_paths = save_processed_data(X_train_pd, X_test_pd, Y_train_pd, Y_test_pd, output_format, run_timestamp=run_timestamp)
         
         logger.info("✓ Data splitting completed")
         logger.info(f"\nDataset shapes after splitting:")
@@ -494,7 +545,8 @@ def data_pipeline(
             'X_train': X_train_np,
             'X_test': X_test_np,
             'Y_train': Y_train_np,
-            'Y_test': Y_test_np
+            'Y_test': Y_test_np,
+            'data_paths': output_paths
         }
             
     except Exception as e:

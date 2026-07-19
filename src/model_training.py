@@ -320,8 +320,13 @@ class ModelTrainer:
                 from utils.s3_io import upload_file
                 proj_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
                 rel_path = os.path.relpath(os.path.abspath(filepath), proj_root).replace('\\', '/')
-                upload_file(filepath, key=rel_path)
-                logger.info(f"✓ Also uploaded scikit-learn model to S3: s3://{rel_path}")
+                timestamp = os.environ.get('ACTIVE_RUN_TIMESTAMP')
+                if timestamp:
+                    s3_key = rel_path.replace('artifacts/models/', f'artifacts/models/run_{timestamp}/')
+                else:
+                    s3_key = rel_path
+                upload_file(filepath, key=s3_key)
+                logger.info(f"✓ Also uploaded scikit-learn model to S3: s3://{s3_key}")
         except Exception as se:
             logger.warning(f"⚠️ Failed to upload scikit-learn model to S3: {se}")
             

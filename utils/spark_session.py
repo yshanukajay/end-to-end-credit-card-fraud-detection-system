@@ -95,7 +95,8 @@ def create_spark_session(
                                     .config("spark.sql.parquet.compression.codec", "snappy") \
                                     .config("spark.sql.parquet.mergeSchema", "false") \
                                     .config("spark.sql.parquet.filterPushdown", "true") \
-                                    .config("spark.sql.csv.parser.columnPruning.enabled", "true")
+                                    .config("spark.sql.csv.parser.columnPruning.enabled", "true") \
+                                    .config("spark.jars.packages", "org.apache.hadoop:hadoop-aws:3.3.4")
         
         # Apply additional configuration if provided
         if config_options:

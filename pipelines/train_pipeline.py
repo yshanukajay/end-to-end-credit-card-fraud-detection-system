@@ -29,6 +29,96 @@ setup_logging()
 logger = logging.getLogger(__name__)
 
 
+def get_latest_run_timestamp_s3(bucket: str) -> Optional[str]:
+    """Find the latest run timestamp directory in S3 under artifacts/data/"""
+    import boto3
+    try:
+        s3 = boto3.client('s3')
+        res = s3.list_objects_v2(Bucket=bucket, Prefix='artifacts/data/', Delimiter='/')
+        prefixes = res.get('CommonPrefixes', [])
+        if not prefixes:
+            return None
+        
+        runs = []
+        for p in prefixes:
+            folder = p.get('Prefix', '')
+            parts = folder.strip('/').split('/')
+            if parts:
+                last_part = parts[-1]
+                if last_part.startswith('run_'):
+                    runs.append(last_part.replace('run_', ''))
+                    
+        if not runs:
+            return None
+            
+        runs.sort()
+        return runs[-1]
+    except Exception as e:
+        logger.warning(f"Could not check S3 for latest run timestamp: {e}")
+        return None
+
+
+def get_latest_run_timestamp_local() -> Optional[str]:
+    """Find the latest run timestamp directory locally under artifacts/data/"""
+    data_dir = os.path.join(PROJECT_ROOT, 'artifacts', 'data')
+    if not os.path.exists(data_dir):
+        return None
+    try:
+        runs = [d.replace('run_', '') for d in os.listdir(data_dir) 
+                if os.path.isdir(os.path.join(data_dir, d)) and d.startswith('run_')]
+        if not runs:
+            return None
+        runs.sort()
+        return runs[-1]
+    except Exception:
+        return None
+
+
+def download_run_artifacts_from_s3(bucket: str, timestamp: str, data_format: str) -> dict:
+    """Download data artifacts for a specific run from S3 to local workspace"""
+    from utils.s3_io import download_file
+    
+    timestamped_dir = os.path.join(PROJECT_ROOT, 'artifacts', 'data', f"run_{timestamp}")
+    os.makedirs(timestamped_dir, exist_ok=True)
+    
+    files_to_download = [
+        ('X_train_npz', 'credit_card_fraud_X_train.npz'),
+        ('X_test_npz', 'credit_card_fraud_X_test.npz'),
+        ('Y_train_npz', 'credit_card_fraud_y_train.npz'),
+        ('Y_test_npz', 'credit_card_fraud_y_test.npz'),
+        ('features_json', 'features.json')
+    ]
+    
+    if data_format == 'parquet':
+        files_to_download.extend([
+            ('X_train_parquet', 'X_train.parquet'),
+            ('X_test_parquet', 'X_test.parquet'),
+            ('Y_train_parquet', 'Y_train.parquet'),
+            ('Y_test_parquet', 'Y_test.parquet')
+        ])
+    else:
+        files_to_download.extend([
+            ('X_train_csv', 'X_train.csv'),
+            ('X_test_csv', 'X_test.csv'),
+            ('Y_train_csv', 'Y_train.csv'),
+            ('Y_test_csv', 'Y_test.csv')
+        ])
+        
+    local_paths = {}
+    logger.info(f"Downloading processed data artifacts for run_{timestamp} from S3...")
+    for key_name, file_name in files_to_download:
+        s3_key = f"artifacts/data/run_{timestamp}/{file_name}"
+        local_path = os.path.join(timestamped_dir, file_name)
+        try:
+            download_file(s3_key, local_path=local_path)
+            local_paths[key_name] = local_path
+        except Exception as e:
+            logger.error(f"Failed to download {s3_key} from S3: {e}")
+            raise
+            
+    return local_paths
+
+
 def training_pipeline(
     data_path: Optional[str] = None,
     model_params: Optional[Dict[str, Any]] = None,
@@ -57,8 +147,38 @@ def training_pipeline(
         
     os.makedirs(os.path.dirname(model_path), exist_ok=True)
 
-    # Run data pipeline first to ensure outputs exist
-    data_pipeline(data_path=data_path, test_size=test_size)
+    from utils.config import force_s3_io, get_s3_bucket
+    
+    # Auto-discover latest run timestamp
+    run_timestamp = os.environ.get('ACTIVE_RUN_TIMESTAMP')
+    if run_timestamp is None:
+        if force_s3_io():
+            try:
+                bucket = get_s3_bucket()
+                run_timestamp = get_latest_run_timestamp_s3(bucket)
+                if run_timestamp:
+                    logger.info(f"Auto-discovered latest run timestamp from S3: {run_timestamp}")
+            except Exception as e:
+                logger.warning(f"Could not search S3 for latest run: {e}")
+        
+        if run_timestamp is None:
+            run_timestamp = get_latest_run_timestamp_local()
+            if run_timestamp:
+                logger.info(f"Auto-discovered latest run timestamp locally: {run_timestamp}")
+                
+    if run_timestamp:
+        os.environ['ACTIVE_RUN_TIMESTAMP'] = run_timestamp
+        
+    # Run data pipeline to ensure outputs exist (cache hit if already run)
+    pipeline_outputs = data_pipeline(data_path=data_path, test_size=test_size, run_timestamp=run_timestamp)
+    data_paths_dict = pipeline_outputs.get('data_paths', {})
+
+    # If S3-only I/O is active, download splits from S3
+    if force_s3_io() and run_timestamp:
+        try:
+            download_run_artifacts_from_s3(get_s3_bucket(), run_timestamp, data_format)
+        except Exception as e:
+            logger.warning(f"Could not download run artifacts from S3: {e}. Will attempt loading local fallback.")
 
     # Initialize Spark session
     spark = create_spark_session("CreditCardFraudDetectionTrainingPipeline")
@@ -87,6 +207,13 @@ def training_pipeline(
         logger.info(f"{'='*80}")
         
         processed_dir = os.path.join(PROJECT_ROOT, 'artifacts/data')
+        if run_timestamp:
+            processed_dir = os.path.join(processed_dir, f"run_{run_timestamp}")
+            
+        def get_path(key, default_name):
+            if data_paths_dict and key in data_paths_dict:
+                return data_paths_dict[key]
+            return os.path.join(processed_dir, default_name)
         
         config = get_config()
         model_cfg = config.get('model', {})
@@ -96,15 +223,15 @@ def training_pipeline(
         if framework == 'pyspark':
             logger.info(f"Loading training and test datasets (format: {data_format}) using PySpark...")
             if data_format == 'parquet':
-                X_train_spark = spark.read.parquet(f"{processed_dir}/X_train.parquet")
-                Y_train_spark = spark.read.parquet(f"{processed_dir}/Y_train.parquet")
-                X_test_spark = spark.read.parquet(f"{processed_dir}/X_test.parquet")
-                Y_test_spark = spark.read.parquet(f"{processed_dir}/Y_test.parquet")
+                X_train_spark = spark.read.parquet(get_path('X_train_parquet', 'X_train.parquet'))
+                Y_train_spark = spark.read.parquet(get_path('Y_train_parquet', 'Y_train.parquet'))
+                X_test_spark = spark.read.parquet(get_path('X_test_parquet', 'X_test.parquet'))
+                Y_test_spark = spark.read.parquet(get_path('Y_test_parquet', 'Y_test.parquet'))
             else:
-                X_train_spark = spark.read.option("header", "true").option("inferSchema", "true").csv(f"{processed_dir}/X_train.csv")
-                Y_train_spark = spark.read.option("header", "true").option("inferSchema", "true").csv(f"{processed_dir}/Y_train.csv")
-                X_test_spark = spark.read.option("header", "true").option("inferSchema", "true").csv(f"{processed_dir}/X_test.csv")
-                Y_test_spark = spark.read.option("header", "true").option("inferSchema", "true").csv(f"{processed_dir}/Y_test.csv")
+                X_train_spark = spark.read.option("header", "true").option("inferSchema", "true").csv(get_path('X_train_csv', 'X_train.csv'))
+                Y_train_spark = spark.read.option("header", "true").option("inferSchema", "true").csv(get_path('Y_train_csv', 'Y_train.csv'))
+                X_test_spark = spark.read.option("header", "true").option("inferSchema", "true").csv(get_path('X_test_csv', 'X_test.csv'))
+                Y_test_spark = spark.read.option("header", "true").option("inferSchema", "true").csv(get_path('Y_test_csv', 'Y_test.csv'))
 
             # Recombine features and label for PySpark ML compatibility
             from pyspark.sql.window import Window
@@ -211,15 +338,15 @@ def training_pipeline(
             # ############### PANDAS / SKLEARN CODES (Active) ###########################
             logger.info(f"Loading training and test datasets (format: {data_format}) using Pandas...")
             if data_format == 'parquet':
-                X_train = pd.read_parquet(f"{processed_dir}/X_train.parquet")
-                Y_train = pd.read_parquet(f"{processed_dir}/Y_train.parquet")
-                X_test = pd.read_parquet(f"{processed_dir}/X_test.parquet")
-                Y_test = pd.read_parquet(f"{processed_dir}/Y_test.parquet")
+                X_train = pd.read_parquet(get_path('X_train_parquet', 'X_train.parquet'))
+                Y_train = pd.read_parquet(get_path('Y_train_parquet', 'Y_train.parquet'))
+                X_test = pd.read_parquet(get_path('X_test_parquet', 'X_test.parquet'))
+                Y_test = pd.read_parquet(get_path('Y_test_parquet', 'Y_test.parquet'))
             else:
-                X_train = pd.read_csv(f"{processed_dir}/X_train.csv")
-                Y_train = pd.read_csv(f"{processed_dir}/Y_train.csv")
-                X_test = pd.read_csv(f"{processed_dir}/X_test.csv")
-                Y_test = pd.read_csv(f"{processed_dir}/Y_test.csv")
+                X_train = pd.read_csv(get_path('X_train_csv', 'X_train.csv'))
+                Y_train = pd.read_csv(get_path('Y_train_csv', 'Y_train.csv'))
+                X_test = pd.read_csv(get_path('X_test_csv', 'X_test.csv'))
+                Y_test = pd.read_csv(get_path('Y_test_csv', 'Y_test.csv'))
             
             # Ensure target column is not in feature sets
             target_col = 'is_fraud'

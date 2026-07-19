@@ -233,13 +233,20 @@ class MinMaxScalingStrategy(FeatureScalingStrategy):
                     bucket = get_s3_bucket()
                     self._configure_s3()
                     
+                    timestamp = os.environ.get('ACTIVE_RUN_TIMESTAMP')
+                    if timestamp:
+                        s3_model_path = f"s3a://{bucket}/artifacts/scale/run_{timestamp}/minmax_scaler_pipeline"
+                        s3_key = f"artifacts/scale/run_{timestamp}/scaling_metadata.json"
+                    else:
+                        s3_model_path = f"s3a://{bucket}/artifacts/scale/minmax_scaler_pipeline"
+                        s3_key = "artifacts/scale/scaling_metadata.json"
+                        
                     # Write Spark pipeline directly to S3
-                    s3_model_path = f"s3a://{bucket}/artifacts/scale/minmax_scaler_pipeline"
                     self.pipeline_model.write().overwrite().save(s3_model_path)
                     logger.info(f"✓ Saved PySpark scaler pipeline directly to S3: {s3_model_path}")
                     
                     # Upload metadata json
-                    upload_file(metadata_path, key="artifacts/scale/scaling_metadata.json")
+                    upload_file(metadata_path, key=s3_key)
             except Exception as se:
                 logger.warning(f"⚠️ Failed to upload MinMaxScaler artifacts to S3: {se}")
 
@@ -469,13 +476,20 @@ class StandardScalingStrategy(FeatureScalingStrategy):
                     bucket = get_s3_bucket()
                     self._configure_s3()
                     
+                    timestamp = os.environ.get('ACTIVE_RUN_TIMESTAMP')
+                    if timestamp:
+                        s3_model_path = f"s3a://{bucket}/artifacts/scale/run_{timestamp}/standard_scaler_pipeline"
+                        s3_key = f"artifacts/scale/run_{timestamp}/scaling_metadata.json"
+                    else:
+                        s3_model_path = f"s3a://{bucket}/artifacts/scale/standard_scaler_pipeline"
+                        s3_key = "artifacts/scale/scaling_metadata.json"
+                        
                     # Write Spark pipeline directly to S3
-                    s3_model_path = f"s3a://{bucket}/artifacts/scale/standard_scaler_pipeline"
                     self.pipeline_model.write().overwrite().save(s3_model_path)
                     logger.info(f"✓ Saved PySpark standard scaler pipeline directly to S3: {s3_model_path}")
                     
                     # Upload metadata json
-                    upload_file(metadata_path, key="artifacts/scale/scaling_metadata.json")
+                    upload_file(metadata_path, key=s3_key)
             except Exception as se:
                 logger.warning(f"⚠️ Failed to upload StandardScaler artifacts to S3: {se}")
 

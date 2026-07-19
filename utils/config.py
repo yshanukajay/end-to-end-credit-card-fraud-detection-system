@@ -101,16 +101,22 @@ def get_inference_config() -> dict:
 
 # AWS S3 Configuration Functions
 def get_aws_config() -> Dict[str, Any]:
-    """Get AWS configuration from config.yaml"""
+    """Get AWS configuration from config.yaml with environment overrides"""
     config = load_config()
     aws_config = config.get('aws', {})
     
-    # Fallback to environment variables if not in config.yaml
+    # Environment variables override config.yaml settings
+    env_force = os.getenv('FORCE_S3_IO')
+    if env_force is not None:
+        force_s3_io_val = env_force.lower() in ('true', '1', 'yes')
+    else:
+        force_s3_io_val = aws_config.get('force_s3_io', False)
+        
     return {
-        'region': aws_config.get('region', os.getenv('AWS_REGION', 'ap-south-1')),
-        'bucket': aws_config.get('s3_bucket', os.getenv('S3_BUCKET')),
-        'kms_key_arn': aws_config.get('s3_kms_key_arn', os.getenv('S3_KMS_KEY_ARN')),
-        'force_s3_io': aws_config.get('force_s3_io', os.getenv('FORCE_S3_IO', 'false').lower() in ('true', '1', 'yes'))
+        'region': os.getenv('AWS_REGION') or aws_config.get('region', 'ap-south-1'),
+        'bucket': os.getenv('S3_BUCKET') or aws_config.get('s3_bucket'),
+        'kms_key_arn': os.getenv('S3_KMS_KEY_ARN') or aws_config.get('s3_kms_key_arn'),
+        'force_s3_io': force_s3_io_val
     }
 
 

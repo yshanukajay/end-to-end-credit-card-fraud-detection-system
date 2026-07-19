@@ -143,8 +143,11 @@ class NominalEncodingStrategy(FeatureEncodingStrategy):
             try:
                 from utils.config import force_s3_io
                 if force_s3_io():
-                    from utils.s3_io import upload_file
-                    s3_key = f"artifacts/encode/{column}_encoder.json"
+                    timestamp = os.environ.get('ACTIVE_RUN_TIMESTAMP')
+                    if timestamp:
+                        s3_key = f"artifacts/encode/run_{timestamp}/{column}_encoder.json"
+                    else:
+                        s3_key = f"artifacts/encode/{column}_encoder.json"
                     upload_file(encoder_path, key=s3_key)
             except Exception as se:
                 logger.warning(f"⚠️ Failed to upload encoder mapping for '{column}' to S3: {se}")
