@@ -1,0 +1,282 @@
+version: '3.8'
+
+services:
+  # ================================
+  # LOCAL POSTGRES FOR AIRFLOW METADATA
+  # ================================
+  airflow-postgres:
+    image: postgres:15
+    container_name: airflow-postgres
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - airflow-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 10s
+      retries: 5
+      start_period: 5s
+    restart: unless-stopped
+    networks:
+      - fraud-detection-network
+
+  # ================================
+  # REDIS BROKER FOR CELERY EXECUTOR
+  # ================================
+  airflow-redis:
+    image: redis:7
+    container_name: airflow-redis
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 30s
+      retries: 50
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - fraud-detection-network
+
+  # ================================
+  # AIRFLOW WEBSERVER UI (PORT 8080)
+  # ================================
+  airflow-webserver:
+    build:
+      context: .
+      dockerfile: docker/airflow/Dockerfile.airflow
+    image: fraud-detection-pipeline/airflow:2.8.1
+    container_name: airflow-webserver
+    user: "${AIRFLOW_UID:-50000}:0"
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+      airflow-redis:
+        condition: service_healthy
+    environment:
+      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${RDS_USER:-airflow}:${RDS_PASSWORD:-airflow}@${RDS_HOST:-airflow-postgres}:${RDS_PORT:-5432}/${RDS_AIRFLOW_DB:-airflow}
+      AIRFLOW__CELERY__BROKER_URL: redis://airflow-redis:6379/0
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${RDS_USER:-airflow}:${RDS_PASSWORD:-airflow}@${RDS_HOST:-airflow-postgres}:${RDS_PORT:-5432}/${RDS_AIRFLOW_DB:-airflow}
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+      AIRFLOW__API__AUTH_BACKENDS: "airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session"
+      _PIP_ADDITIONAL_REQUIREMENTS: "pyspark==3.5.0 mlflow boto3 pandas numpy scikit-learn xgboost matplotlib seaborn pyyaml"
+      PYTHONPATH: "/opt/app:/opt/app/src:/opt/app/utils:/opt/app/pipelines"
+      PATH: "/home/airflow/.local/bin:/usr/local/bin:/usr/bin:/bin"
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_DEFAULT_REGION: ${AWS_REGION:-us-east-1}
+      S3_BUCKET: ${S3_BUCKET:-credit-card-fraud-data-bucket}
+      MLFLOW_TRACKING_URI: http://mlflow-tracking:5001
+      CONTAINERIZED: "true"
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+      - ./src:/opt/app/src:ro
+      - ./utils:/opt/app/utils:ro
+      - ./pipelines:/opt/app/pipelines:ro
+      - ./dataset:/opt/app/dataset
+      - ./artifacts:/opt/app/artifacts
+      - ./config.yaml:/opt/app/config.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ~/.aws:/home/airflow/.aws:ro
+    ports:
+      - "8080:8080"
+    command: webserver
+    restart: unless-stopped
+    networks:
+      - fraud-detection-network
+
+  # ================================
+  # AIRFLOW SCHEDULER
+  # ================================
+  airflow-scheduler:
+    build:
+      context: .
+      dockerfile: docker/airflow/Dockerfile.airflow
+    image: fraud-detection-pipeline/airflow:2.8.1
+    container_name: airflow-scheduler
+    user: "${AIRFLOW_UID:-50000}:0"
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+      airflow-redis:
+        condition: service_healthy
+    environment:
+      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${RDS_USER:-airflow}:${RDS_PASSWORD:-airflow}@${RDS_HOST:-airflow-postgres}:${RDS_PORT:-5432}/${RDS_AIRFLOW_DB:-airflow}
+      AIRFLOW__CELERY__BROKER_URL: redis://airflow-redis:6379/0
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${RDS_USER:-airflow}:${RDS_PASSWORD:-airflow}@${RDS_HOST:-airflow-postgres}:${RDS_PORT:-5432}/${RDS_AIRFLOW_DB:-airflow}
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+      _PIP_ADDITIONAL_REQUIREMENTS: "pyspark==3.5.0 mlflow boto3 pandas numpy scikit-learn xgboost matplotlib seaborn pyyaml"
+      PYTHONPATH: "/opt/app:/opt/app/src:/opt/app/utils:/opt/app/pipelines"
+      PATH: "/home/airflow/.local/bin:/usr/local/bin:/usr/bin:/bin"
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_DEFAULT_REGION: ${AWS_REGION:-us-east-1}
+      S3_BUCKET: ${S3_BUCKET:-credit-card-fraud-data-bucket}
+      MLFLOW_TRACKING_URI: http://mlflow-tracking:5001
+      CONTAINERIZED: "true"
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+      - ./src:/opt/app/src:ro
+      - ./utils:/opt/app/utils:ro
+      - ./pipelines:/opt/app/pipelines:ro
+      - ./dataset:/opt/app/dataset
+      - ./artifacts:/opt/app/artifacts
+      - ./config.yaml:/opt/app/config.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ~/.aws:/home/airflow/.aws:ro
+    command: scheduler
+    restart: unless-stopped
+    networks:
+      - fraud-detection-network
+
+  # ================================
+  # AIRFLOW CELERY WORKER
+  # ================================
+  airflow-worker:
+    build:
+      context: .
+      dockerfile: docker/airflow/Dockerfile.airflow
+    image: fraud-detection-pipeline/airflow:2.8.1
+    container_name: airflow-worker
+    user: "${AIRFLOW_UID:-50000}:0"
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+      airflow-redis:
+        condition: service_healthy
+    environment:
+      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${RDS_USER:-airflow}:${RDS_PASSWORD:-airflow}@${RDS_HOST:-airflow-postgres}:${RDS_PORT:-5432}/${RDS_AIRFLOW_DB:-airflow}
+      AIRFLOW__CELERY__BROKER_URL: redis://airflow-redis:6379/0
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${RDS_USER:-airflow}:${RDS_PASSWORD:-airflow}@${RDS_HOST:-airflow-postgres}:${RDS_PORT:-5432}/${RDS_AIRFLOW_DB:-airflow}
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
+      _PIP_ADDITIONAL_REQUIREMENTS: "pyspark==3.5.0 mlflow boto3 pandas numpy scikit-learn xgboost matplotlib seaborn pyyaml"
+      PYTHONPATH: "/opt/app:/opt/app/src:/opt/app/utils:/opt/app/pipelines"
+      PATH: "/home/airflow/.local/bin:/usr/local/bin:/usr/bin:/bin"
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_DEFAULT_REGION: ${AWS_REGION:-us-east-1}
+      S3_BUCKET: ${S3_BUCKET:-credit-card-fraud-data-bucket}
+      MLFLOW_TRACKING_URI: http://mlflow-tracking:5001
+      CONTAINERIZED: "true"
+      DUMB_INIT_SETSID: "0"
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+      - ./src:/opt/app/src:ro
+      - ./utils:/opt/app/utils:ro
+      - ./pipelines:/opt/app/pipelines:ro
+      - ./dataset:/opt/app/dataset
+      - ./artifacts:/opt/app/artifacts
+      - ./config.yaml:/opt/app/config.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ~/.aws:/home/airflow/.aws:ro
+    command: celery worker
+    restart: unless-stopped
+    networks:
+      - fraud-detection-network
+
+  # ================================
+  # AIRFLOW INIT (DB MIGRATE & ADMIN USER)
+  # ================================
+  airflow-init:
+    build:
+      context: .
+      dockerfile: docker/airflow/Dockerfile.airflow
+    image: fraud-detection-pipeline/airflow:2.8.1
+    container_name: airflow-init
+    user: "${AIRFLOW_UID:-50000}:0"
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+      airflow-redis:
+        condition: service_healthy
+    environment:
+      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${RDS_USER:-airflow}:${RDS_PASSWORD:-airflow}@${RDS_HOST:-airflow-postgres}:${RDS_PORT:-5432}/${RDS_AIRFLOW_DB:-airflow}
+      AIRFLOW__CELERY__BROKER_URL: redis://airflow-redis:6379/0
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${RDS_USER:-airflow}:${RDS_PASSWORD:-airflow}@${RDS_HOST:-airflow-postgres}:${RDS_PORT:-5432}/${RDS_AIRFLOW_DB:-airflow}
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      _PIP_ADDITIONAL_REQUIREMENTS: "pyspark==3.5.0 mlflow boto3 pandas numpy scikit-learn xgboost matplotlib seaborn pyyaml"
+      PYTHONPATH: "/opt/app:/opt/app/src:/opt/app/utils:/opt/app/pipelines"
+      PATH: "/home/airflow/.local/bin:/usr/local/bin:/usr/bin:/bin"
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_DEFAULT_REGION: ${AWS_REGION:-us-east-1}
+      S3_BUCKET: ${S3_BUCKET:-credit-card-fraud-data-bucket}
+      MLFLOW_TRACKING_URI: http://mlflow-tracking:5001
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+      - ./src:/opt/app/src:ro
+      - ./utils:/opt/app/utils:ro
+      - ./pipelines:/opt/app/pipelines:ro
+      - ./dataset:/opt/app/dataset
+      - ./artifacts:/opt/app/artifacts
+      - ./config.yaml:/opt/app/config.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ~/.aws:/home/airflow/.aws:ro
+    entrypoint: ["/bin/bash", "-c"]
+    command: 
+      - |
+        airflow db migrate && \
+        airflow users create \
+          --username admin \
+          --password admin \
+          --firstname Admin \
+          --lastname User \
+          --role Admin \
+          --email admin@example.com || echo "User already exists" && \
+        echo "✅ Airflow init completed"
+    networks:
+      - fraud-detection-network
+
+  # ================================
+  # AIRFLOW FLOWER DASHBOARD (PORT 5555)
+  # ================================
+  airflow-flower:
+    image: apache/airflow:2.8.1-python3.11
+    container_name: airflow-flower
+    user: "${AIRFLOW_UID:-50000}:0"
+    depends_on:
+      airflow-postgres:
+        condition: service_healthy
+      airflow-redis:
+        condition: service_healthy
+    environment:
+      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${RDS_USER:-airflow}:${RDS_PASSWORD:-airflow}@${RDS_HOST:-airflow-postgres}:${RDS_PORT:-5432}/${RDS_AIRFLOW_DB:-airflow}
+      AIRFLOW__CELERY__BROKER_URL: redis://airflow-redis:6379/0
+      AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${RDS_USER:-airflow}:${RDS_PASSWORD:-airflow}@${RDS_HOST:-airflow-postgres}:${RDS_PORT:-5432}/${RDS_AIRFLOW_DB:-airflow}
+      _PIP_ADDITIONAL_REQUIREMENTS: "flower"
+      PYTHONPATH: "/opt/app:/opt/app/src:/opt/app/utils:/opt/app/pipelines"
+      PATH: "/home/airflow/.local/bin:/usr/local/bin:/usr/bin:/bin"
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./airflow/logs:/opt/airflow/logs
+      - ./airflow/plugins:/opt/airflow/plugins
+    ports:
+      - "5555:5555"
+    command: celery flower
+    restart: unless-stopped
+    networks:
+      - fraud-detection-network
+
+volumes:
+  airflow-postgres-data:
+
+networks:
+  fraud-detection-network:
+    name: fraud-detection-network
+    external: true

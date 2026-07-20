@@ -1,0 +1,27 @@
+# Git & repository history
+.git
+.gitignore
+
+# Python virtual environment & caches
+.venv/
+venv/
+ENV/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Local runtime data, logs, and artifacts
+logs/
+runtime/
+mlruns/
+mlflow.db
+artifacts/
+dataset/processed/
+
+# IDE & OS files
+.vscode/
+.idea/
+.DS_Store
+*.swp
+.env

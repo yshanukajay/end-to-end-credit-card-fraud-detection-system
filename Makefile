@@ -6,7 +6,8 @@ SHELL := /usr/bin/env bash
          kafka-producer-stream kafka-producer-batch kafka-consumer kafka-consumer-continuous \
          kafka-check kafka-monitor kafka-sample-scored kafka-reset kafka-help \
          airflow-init airflow-start airflow-kill airflow-reset \
-         docker-build docker-build-no-cache docker-up docker-down docker-stop docker-stop-all docker-data-pipeline docker-model-pipeline docker-inference-pipeline docker-run-all docker-status \
+         docker-build docker-build-no-cache docker-up docker-down docker-stop docker-stop-all docker-data-pipeline docker-model-pipeline docker-inference-pipeline docker-run-all docker-status docker-clean docker-nuclear \
+         docker-airflow-up docker-airflow-down docker-airflow-init docker-airflow-webserver docker-airflow-webserver-logs docker-airflow-status docker-airflow-logs docker-airflow-clean \
          s3-upload-data s3-list s3-clean s3-delete-prefix s3-smoke
 
 # Default Python interpreter
@@ -530,6 +531,48 @@ docker-nuclear:
 	@echo "🧹 Cleaning local runtime, logs, runs, and artifacts..."
 	-rm -rf logs/* mlruns/* artifacts/data/* artifacts/models/* artifacts/scale/* artifacts/encode/* artifacts/inference_batches/* dataset/processed/* airflow/*.db airflow/logs/* runtime/pids/* runtime/kafka-logs/*
 	@echo "✅ Nuclear cleanup completed successfully! Clean slate."
+
+# ========================================================================================
+# AIRFLOW DOCKER COMMANDS
+# ========================================================================================
+
+docker-airflow-up:
+	@echo "🐳 Starting Airflow services in Docker..."
+	@docker network create fraud-detection-network 2>/dev/null || true
+	docker compose -f docker-compose.airflow.yml up -d
+
+docker-airflow-down:
+	@echo "🐳 Stopping Airflow services in Docker..."
+	docker compose -f docker-compose.airflow.yml down
+	@docker rm -f airflow-redis airflow-postgres airflow-webserver airflow-scheduler airflow-worker airflow-init airflow-flower 2>/dev/null || true
+
+docker-airflow-init:
+	@echo "🐳 Initializing Airflow database and admin user in Docker..."
+	@docker network create fraud-detection-network 2>/dev/null || true
+	docker compose -f docker-compose.airflow.yml run --rm airflow-init
+
+docker-airflow-webserver:
+	@echo "🐳 Starting Airflow webserver container in Docker..."
+	@docker network create fraud-detection-network 2>/dev/null || true
+	docker compose -f docker-compose.airflow.yml up -d airflow-webserver
+
+docker-airflow-webserver-logs:
+	@echo "🐳 Tailing Airflow webserver logs in Docker..."
+	docker compose -f docker-compose.airflow.yml logs -f airflow-webserver
+
+docker-airflow-status:
+	@echo "🐳 Showing status of Airflow Docker services..."
+	docker compose -f docker-compose.airflow.yml ps
+
+docker-airflow-logs:
+	@echo "🐳 Tailing logs of Airflow Docker services..."
+	docker compose -f docker-compose.airflow.yml logs -f
+
+docker-airflow-clean:
+	@echo "🐳 Stopping Airflow containers and clearing database volumes..."
+	docker compose -f docker-compose.airflow.yml down -v --remove-orphans
+	@docker rm -f airflow-redis airflow-postgres airflow-webserver airflow-scheduler airflow-worker airflow-init airflow-flower 2>/dev/null || true
+	@echo "✅ Airflow Docker cleanup completed!"
 
 # ========================================================================================
 # S3 ORCHESTRATION COMMANDS

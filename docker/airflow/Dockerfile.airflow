@@ -1,0 +1,53 @@
+# Dockerfile.airflow for Credit Card Fraud Detection System
+ARG AIRFLOW_VERSION=2.8.1
+ARG PYTHON_MAJOR_MINOR=3.11
+
+FROM apache/airflow:${AIRFLOW_VERSION}-python${PYTHON_MAJOR_MINOR}
+
+# Install Java (JRE) and system dependencies as root for PySpark and CLI support
+USER root
+RUN mkdir -p /usr/share/man/man1 \
+ && apt-get update && apt-get install -y --no-install-recommends \
+    default-jre-headless \
+    curl \
+    procps \
+ && rm -rf /var/lib/apt/lists/*
+
+# Set Java home environment variable for PySpark
+ENV JAVA_HOME=/usr/lib/jvm/default-java \
+    PYTHONPATH=/opt/app:/opt/app/src:/opt/app/utils:/opt/app/pipelines
+
+# Switch back to airflow user for Python dependencies installation
+USER airflow
+
+# Install Airflow providers and Python dependencies using Airflow constraints for compatibility
+RUN pip install --no-cache-dir \
+  --constraint "https://raw.githubusercontent.com/apache/airflow/constraints-2.8.1/constraints-3.11.txt" \
+  apache-airflow-providers-amazon==8.16.0 \
+  apache-airflow-providers-docker==3.* \
+  pyspark==3.5.0 \
+  mlflow \
+  boto3 \
+  s3fs \
+  pandas \
+  numpy \
+  scikit-learn \
+  xgboost \
+  matplotlib \
+  seaborn \
+  pyyaml \
+  flower
+
+# Copy project DAG files
+COPY --chown=airflow:root dags/*.py /opt/airflow/dags/
+
+# Copy custom entrypoint script
+COPY docker/airflow/entrypoint.sh /entrypoint.sh
+USER root
+RUN chmod +x /entrypoint.sh
+USER airflow
+
+LABEL maintainer="ml_engineering_team"
+LABEL description="Production Airflow image for Credit Card Fraud Detection Pipeline with PySpark, MLflow, and S3"
+
+ENTRYPOINT ["/entrypoint.sh"]
