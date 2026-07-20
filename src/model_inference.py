@@ -32,6 +32,55 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(name)s - %(level
 logger = get_logger(__name__)
 
 
+def get_latest_run_timestamp() -> Optional[str]:
+    """Check env or auto-discover latest run timestamp from S3 or local disk."""
+    timestamp = os.environ.get('ACTIVE_RUN_TIMESTAMP')
+    if timestamp:
+        return timestamp
+    
+    try:
+        from utils.config import force_s3_io, get_s3_bucket
+        if force_s3_io():
+            bucket = get_s3_bucket()
+            from utils.s3_io import get_s3_client
+            s3 = get_s3_client()
+            for prefix_check in ['artifacts/models/', 'artifacts/data/']:
+                res = s3.list_objects_v2(Bucket=bucket, Prefix=prefix_check, Delimiter='/')
+                prefixes = res.get('CommonPrefixes', [])
+                runs = []
+                for p in prefixes:
+                    folder = p.get('Prefix', '')
+                    parts = folder.strip('/').split('/')
+                    if parts:
+                        last_part = parts[-1]
+                        if last_part.startswith('run_'):
+                            runs.append(last_part.replace('run_', ''))
+                if runs:
+                    runs.sort()
+                    timestamp = runs[-1]
+                    logger.info(f"Auto-discovered latest run timestamp from S3: {timestamp}")
+                    os.environ['ACTIVE_RUN_TIMESTAMP'] = timestamp
+                    return timestamp
+    except Exception as e:
+        logger.warning(f"Could not auto-discover S3 run timestamp: {e}")
+        
+    try:
+        for folder_check in [os.path.join(PROJECT_ROOT, 'artifacts', 'models'), os.path.join(PROJECT_ROOT, 'artifacts', 'data')]:
+            if os.path.exists(folder_check):
+                runs = [d.replace('run_', '') for d in os.listdir(folder_check) 
+                        if os.path.isdir(os.path.join(folder_check, d)) and d.startswith('run_')]
+                if runs:
+                    runs.sort()
+                    timestamp = runs[-1]
+                    logger.info(f"Auto-discovered latest run timestamp locally: {timestamp}")
+                    os.environ['ACTIVE_RUN_TIMESTAMP'] = timestamp
+                    return timestamp
+    except Exception:
+        pass
+        
+    return None
+
+
 def haversine_distance(lat1, lon1, lat2, lon2):
     """Calculate haversine distance in miles."""
     R = 3958.8  # Earth radius in miles
@@ -63,6 +112,9 @@ class ModelInference:
         
         self.config = get_config()
         self.use_spark = use_spark
+        
+        # Auto-discover latest run timestamp
+        get_latest_run_timestamp()
         
         if use_spark:
             from utils.spark_session import get_or_create_spark_session
@@ -113,8 +165,13 @@ class ModelInference:
                     from utils.s3_io import download_file, key_exists
                     proj_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
                     rel_meta_path = os.path.relpath(os.path.abspath(metadata_path), proj_root).replace('\\', '/')
-                    if key_exists(rel_meta_path):
-                        logger.info(f"Downloading metadata from S3 to {metadata_path}")
+                    timestamp = get_latest_run_timestamp()
+                    ts_meta_key = rel_meta_path.replace('artifacts/models/', f'artifacts/models/run_{timestamp}/') if timestamp else rel_meta_path
+                    if timestamp and key_exists(ts_meta_key):
+                        logger.info(f"Downloading timestamped metadata from S3 ({ts_meta_key}) to {metadata_path}")
+                        download_file(ts_meta_key, local_path=metadata_path)
+                    elif key_exists(rel_meta_path):
+                        logger.info(f"Downloading metadata from S3 ({rel_meta_path}) to {metadata_path}")
                         download_file(rel_meta_path, local_path=metadata_path)
             except Exception as se:
                 logger.warning(f"⚠️ S3 metadata download failed: {se}")
@@ -155,6 +212,7 @@ class ModelInference:
                 bucket = get_s3_bucket()
                 proj_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
                 rel_path = os.path.relpath(os.path.abspath(self.model_path), proj_root).replace('\\', '/')
+                timestamp = get_latest_run_timestamp()
                 
                 # Check if it's Spark
                 if rel_path.endswith('pipeline') or not rel_path.endswith('.joblib') and not rel_path.endswith('.pkl'):
@@ -192,14 +250,19 @@ class ModelInference:
                     hadoop_conf.set("fs.s3a.endpoint", f"s3.{region}.amazonaws.com")
                     hadoop_conf.set("fs.s3a.connection.ssl.enabled", "true")
                     
-                    s3_model_path = f"s3a://{bucket}/{rel_path}"
+                    ts_rel_path = rel_path.replace('artifacts/models/', f'artifacts/models/run_{timestamp}/') if timestamp else rel_path
+                    s3_model_path = f"s3a://{bucket}/{ts_rel_path}"
                     logger.info(f"Loading Spark model directly from S3: {s3_model_path}")
                     self.model = PipelineModel.load(s3_model_path)
                     self.is_spark_model = True
                     return
                 else:
                     from utils.s3_io import download_file, key_exists
-                    if key_exists(rel_path):
+                    ts_rel_path = rel_path.replace('artifacts/models/', f'artifacts/models/run_{timestamp}/') if timestamp else rel_path
+                    if timestamp and key_exists(ts_rel_path):
+                        logger.info(f"Downloading timestamped model from S3 ({ts_rel_path}) to {self.model_path}")
+                        download_file(ts_rel_path, local_path=self.model_path)
+                    elif key_exists(rel_path):
                         logger.info(f"Downloading model from S3 ({rel_path}) to {self.model_path}")
                         download_file(rel_path, local_path=self.model_path)
         except Exception as se:
@@ -250,9 +313,15 @@ class ModelInference:
             from utils.config import force_s3_io
             if force_s3_io():
                 from utils.s3_io import list_keys, download_file
-                s3_prefix = "artifacts/encode/"
+                timestamp = get_latest_run_timestamp()
+                s3_prefix = f"artifacts/encode/run_{timestamp}/" if timestamp else "artifacts/encode/"
                 s3_keys = list_keys(prefix=s3_prefix)
                 encoder_keys = [k for k in s3_keys if k.endswith('_encoder.json')]
+                if not encoder_keys and timestamp:
+                    s3_prefix = "artifacts/encode/"
+                    s3_keys = list_keys(prefix=s3_prefix)
+                    encoder_keys = [k for k in s3_keys if k.endswith('_encoder.json')]
+                    
                 for k in encoder_keys:
                     filename = os.path.basename(k)
                     local_dest = os.path.join(encoders_dir, filename)
@@ -301,11 +370,14 @@ class ModelInference:
             from utils.config import force_s3_io
             if force_s3_io():
                 from utils.s3_io import download_file, key_exists
-                s3_metadata_key = "artifacts/scale/scaling_metadata.json"
+                timestamp = get_latest_run_timestamp()
+                s3_metadata_key = f"artifacts/scale/run_{timestamp}/scaling_metadata.json" if timestamp else "artifacts/scale/scaling_metadata.json"
+                if timestamp and not key_exists(s3_metadata_key):
+                    s3_metadata_key = "artifacts/scale/scaling_metadata.json"
                 if key_exists(s3_metadata_key):
                     local_dest = os.path.join(scaler_dir, 'scaling_metadata.json')
                     os.makedirs(os.path.dirname(local_dest), exist_ok=True)
-                    logger.info(f"Downloading scaler metadata from S3 to {local_dest}")
+                    logger.info(f"Downloading scaler metadata from S3 ({s3_metadata_key}) to {local_dest}")
                     download_file(s3_metadata_key, local_path=local_dest)
         except Exception as se:
             logger.warning(f"⚠️ S3 scaler metadata download failed: {se}")

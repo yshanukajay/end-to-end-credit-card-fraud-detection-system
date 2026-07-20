@@ -627,7 +627,7 @@ def training_pipeline(
             from utils.config import force_s3_io
             if force_s3_io():
                 from utils.s3_io import upload_file
-                timestamp = active_run_timestamp or os.environ.get('ACTIVE_RUN_TIMESTAMP')
+                timestamp = run_timestamp or os.environ.get('ACTIVE_RUN_TIMESTAMP')
                 prefix = f"artifacts/models/run_{timestamp}" if timestamp else "artifacts/models"
                 artifacts_to_upload = [
                     model_path, metadata_path, summary_path, pr_curve_path

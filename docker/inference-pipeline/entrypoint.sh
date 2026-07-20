@@ -66,14 +66,14 @@ try:
     s3 = boto3.client('s3')
     
     # Check for model artifacts
-    model_response = s3.list_objects_v2(Bucket='${S3_BUCKET}', Prefix='artifacts/model_artifacts/', MaxKeys=1)
+    model_response = s3.list_objects_v2(Bucket='${S3_BUCKET}', Prefix='artifacts/models/', MaxKeys=1)
     if 'Contents' in model_response:
         print('✅ Model artifacts found in S3')
     else:
         print('⚠️ No model artifacts found in S3')
     
     # Check for data artifacts
-    data_response = s3.list_objects_v2(Bucket='${S3_BUCKET}', Prefix='artifacts/data_artifacts/', MaxKeys=1)
+    data_response = s3.list_objects_v2(Bucket='${S3_BUCKET}', Prefix='artifacts/data/', MaxKeys=1)
     if 'Contents' in data_response:
         print('✅ Data artifacts found in S3')
     else:
