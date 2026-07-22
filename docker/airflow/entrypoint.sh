@@ -33,5 +33,15 @@ EOF
 
 echo "🔧 Airflow Spark S3A configuration completed"
 
+# Ensure artifact & log directories are writable by the airflow user.
+# Windows Docker Desktop mounts volumes as root-owned; chmod 777 makes them
+# accessible to uid 50000 (airflow) without requiring root privileges here.
+for dir in /opt/app/artifacts /opt/app/logs /opt/app/dataset; do
+    if [ -d "$dir" ]; then
+        chmod -R 777 "$dir" 2>/dev/null || true
+        echo "🔓 Ensured write access: $dir"
+    fi
+done
+
 # Delegate execution to official Airflow entrypoint
 exec /entrypoint "$@"

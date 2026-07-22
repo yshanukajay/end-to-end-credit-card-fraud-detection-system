@@ -48,10 +48,6 @@ def setup_logging(process_name: Optional[str] = None, force: bool = False) -> lo
     # Generate timestamp for filename: YYYYMMDD_HHMMSS
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     
-    log_dir = os.path.join(_PROJECT_ROOT, 'logs', process_name)
-    os.makedirs(log_dir, exist_ok=True)
-    log_file = os.path.join(log_dir, f"{timestamp}.txt")
-    
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.INFO)
     
@@ -66,8 +62,16 @@ def setup_logging(process_name: Optional[str] = None, force: bool = False) -> lo
     console_handler.setFormatter(formatter)
     root_logger.addHandler(console_handler)
     
-    # 2. File Handler
+    # 2. File Handler with permission fallback
     try:
+        log_dir = os.path.join(_PROJECT_ROOT, 'logs', process_name)
+        try:
+            os.makedirs(log_dir, exist_ok=True)
+        except PermissionError:
+            log_dir = os.path.join('/tmp', 'logs', process_name)
+            os.makedirs(log_dir, exist_ok=True)
+            
+        log_file = os.path.join(log_dir, f"{timestamp}.txt")
         file_handler = logging.FileHandler(log_file, encoding='utf-8')
         file_handler.setFormatter(formatter)
         root_logger.addHandler(file_handler)

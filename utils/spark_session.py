@@ -74,12 +74,23 @@ def create_spark_session(
         driver_java_opts = _merge_java_options(existing_driver_opts, REQUIRED_JAVA_OPTS)
         executor_java_opts = _merge_java_options(existing_executor_opts, REQUIRED_JAVA_OPTS)
 
+        # Resolve hadoop-aws JARs — prefer pre-baked local JARs (Docker container path)
+        # to avoid downloading from Maven at runtime (Maven is unreachable in container network).
+        # Falls back to spark.jars.packages for local development environments.
+        _local_jar_dir = "/opt/spark-jars"
+        _hadoop_aws_jar = f"{_local_jar_dir}/hadoop-aws-3.3.4.jar"
+        _aws_sdk_jar = f"{_local_jar_dir}/aws-java-sdk-bundle-1.12.262.jar"
+        _local_jars_available = (
+            os.path.exists(_hadoop_aws_jar) and os.path.exists(_aws_sdk_jar)
+        )
+
         # Base configuration for optimal performance
         builder = SparkSession.builder \
                                     .appName(app_name) \
                                     .master(master) \
-                                    .config("spark.driver.memory", "3g") \
-                                    .config("spark.executor.memory", "2g") \
+                                    .config("spark.driver.memory", "2g") \
+                                    .config("spark.executor.memory", "1g") \
+                                    .config("spark.driver.maxResultSize", "512m") \
                                     .config("spark.driver.extraJavaOptions", driver_java_opts) \
                                     .config("spark.executor.extraJavaOptions", executor_java_opts) \
                                     .config("spark.network.timeout", "800s") \
@@ -96,8 +107,23 @@ def create_spark_session(
                                     .config("spark.sql.parquet.compression.codec", "snappy") \
                                     .config("spark.sql.parquet.mergeSchema", "false") \
                                     .config("spark.sql.parquet.filterPushdown", "true") \
-                                    .config("spark.sql.csv.parser.columnPruning.enabled", "true") \
-                                    .config("spark.jars.packages", "org.apache.hadoop:hadoop-aws:3.3.4")
+                                    .config("spark.sql.csv.parser.columnPruning.enabled", "true")
+
+        if _local_jars_available:
+            # Use pre-baked JARs from disk (Docker container) — no Maven download needed
+            logger.info(f"Using pre-baked hadoop-aws JARs from: {_local_jar_dir}")
+            builder = builder.config(
+                "spark.jars", f"{_hadoop_aws_jar},{_aws_sdk_jar}"
+            )
+        else:
+            # Local dev fallback: download from Maven (requires internet)
+            logger.warning(
+                "Pre-baked hadoop-aws JARs not found at %s — falling back to "
+                "spark.jars.packages (requires Maven access)", _local_jar_dir
+            )
+            builder = builder.config(
+                "spark.jars.packages", "org.apache.hadoop:hadoop-aws:3.3.4"
+            )
         
         # Apply additional configuration if provided
         if config_options:

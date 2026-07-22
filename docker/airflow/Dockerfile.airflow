@@ -17,6 +17,17 @@ RUN mkdir -p /usr/share/man/man1 \
 ENV JAVA_HOME=/usr/lib/jvm/default-java \
     PYTHONPATH=/opt/app:/opt/app/src:/opt/app/utils:/opt/app/pipelines
 
+# Pre-download hadoop-aws JARs into PySpark jars dir so Spark doesn't need Maven at runtime
+# (Maven repos are unreachable inside the container network at task execution time)
+RUN PYSPARK_JARS_DIR=/usr/local/lib/python3.11/dist-packages/pyspark/jars && \
+    HADOOP_AWS_VERSION=3.3.4 && \
+    AWS_SDK_VERSION=1.12.262 && \
+    mkdir -p /opt/spark-jars && \
+    curl -fSL "https://repo1.maven.org/maven2/org/apache/hadoop/hadoop-aws/${HADOOP_AWS_VERSION}/hadoop-aws-${HADOOP_AWS_VERSION}.jar" \
+         -o /opt/spark-jars/hadoop-aws-${HADOOP_AWS_VERSION}.jar && \
+    curl -fSL "https://repo1.maven.org/maven2/com/amazonaws/aws-java-sdk-bundle/${AWS_SDK_VERSION}/aws-java-sdk-bundle-${AWS_SDK_VERSION}.jar" \
+         -o /opt/spark-jars/aws-java-sdk-bundle-${AWS_SDK_VERSION}.jar
+
 # Switch back to airflow user for Python dependencies installation
 USER airflow
 
@@ -36,6 +47,7 @@ RUN pip install --no-cache-dir \
   matplotlib \
   seaborn \
   pyyaml \
+  imbalanced-learn \
   flower
 
 # Copy project DAG files

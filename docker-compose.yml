@@ -15,7 +15,7 @@ services:
       - AWS_PROFILE=${AWS_PROFILE:-default}
       - AWS_SHARED_CREDENTIALS_FILE=/home/appuser/.aws/credentials
       - AWS_CONFIG_FILE=/home/appuser/.aws/config
-      - MLFLOW_BACKEND_STORE_URI=${MLFLOW_BACKEND_STORE_URI:-sqlite:///mlflow.db}
+      - MLFLOW_BACKEND_STORE_URI=${MLFLOW_BACKEND_STORE_URI:-sqlite:///tmp/mlruns/mlflow.db}
       - MLFLOW_DEFAULT_ARTIFACT_ROOT=s3://${S3_BUCKET}/mlflow-artifacts
       - MLFLOW_SERVER_ALLOWED_HOSTS=*
     volumes:
@@ -101,4 +101,5 @@ volumes:
 networks:
   default:
     name: fraud-detection-network
+    external: true
 

@@ -4,8 +4,10 @@ from airflow.utils import timezone
 from datetime import datetime, timedelta
 from airflow.operators.python import PythonOperator
 
-project_root = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-sys.path.insert(0, project_root)
+# Ensure project root & /opt/app are in sys.path for Airflow container
+for path in ['/opt/app', os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))]:
+    if os.path.exists(path) and path not in sys.path:
+        sys.path.insert(0, path)
 
 from utils.airflow_tasks import validate_input_data, run_data_pipeline
 

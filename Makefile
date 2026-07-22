@@ -473,40 +473,59 @@ airflow-reset:
 
 docker-build:
 	@echo "🐳 Building all Docker images..."
+	@python -c "import subprocess; subprocess.run(['docker', 'network', 'create', 'fraud-detection-network'], stderr=subprocess.DEVNULL)"
 	docker compose build
 
 docker-build-no-cache:
 	@echo "🐳 Building all Docker images without cache..."
+	@python -c "import subprocess; subprocess.run(['docker', 'network', 'create', 'fraud-detection-network'], stderr=subprocess.DEVNULL)"
 	docker compose build --no-cache
 
 docker-up:
 	@echo "🐳 Starting all Docker services..."
+	@python -c "import subprocess; subprocess.run(['docker', 'network', 'create', 'fraud-detection-network'], stderr=subprocess.DEVNULL)"
 	docker compose up -d mlflow-tracking
 
 docker-down:
 	@echo "🐳 Stopping all Docker services..."
 	docker compose down
 
+docker-stop-airflow:
+	@echo "🛑 Stopping Airflow containers..."
+	docker compose -f docker-compose.airflow.yml stop
+	@python -c "import subprocess; subprocess.run(['docker', 'stop', 'airflow-worker', 'airflow-scheduler', 'airflow-webserver', 'airflow-flower', 'airflow-postgres', 'airflow-redis', 'airflow-init'], stderr=subprocess.DEVNULL)"
+	@echo "✅ Airflow containers stopped."
+
 docker-stop-all:
-	@echo "🛑 Stopping all running Docker containers..."
-	@python -c "import subprocess; ids = [i for i in subprocess.check_output(['docker', 'ps', '-q']).decode().split() if i]; (subprocess.run(['docker', 'stop'] + ids) if ids else print('No running containers found.'))"
+	@echo "🛑 Stopping ALL running Docker containers..."
+	@python -c "import subprocess; ids = subprocess.check_output(['docker', 'ps', '-q']).decode().split(); (subprocess.run(['docker', 'stop'] + ids) if ids else print('No running containers found.'))"
+	@echo "✅ All containers stopped."
 
 docker-stop: docker-stop-all
 
+docker-remove-all:
+	@echo "🗑️  Stopping and removing ALL Docker containers..."
+	@python -c "import subprocess; ids = subprocess.check_output(['docker', 'ps', '-aq']).decode().split(); (subprocess.run(['docker', 'rm', '-f'] + ids) if ids else print('No containers to remove.'))"
+	@echo "✅ All containers removed."
+
 docker-data-pipeline:
 	@echo "🐳 Running data pipeline in Docker..."
+	@python -c "import subprocess; subprocess.run(['docker', 'network', 'create', 'fraud-detection-network'], stderr=subprocess.DEVNULL)"
 	docker compose run --rm data-pipeline
 
 docker-model-pipeline:
 	@echo "🐳 Running model pipeline in Docker..."
+	@python -c "import subprocess; subprocess.run(['docker', 'network', 'create', 'fraud-detection-network'], stderr=subprocess.DEVNULL)"
 	docker compose run --rm model-pipeline
 
 docker-inference-pipeline:
 	@echo "🐳 Running inference pipeline in Docker..."
+	@python -c "import subprocess; subprocess.run(['docker', 'network', 'create', 'fraud-detection-network'], stderr=subprocess.DEVNULL)"
 	docker compose run --rm inference-pipeline
 
 docker-run-all:
 	@echo "🐳 Running all pipelines in Docker sequentially..."
+	@python -c "import subprocess; subprocess.run(['docker', 'network', 'create', 'fraud-detection-network'], stderr=subprocess.DEVNULL)"
 	docker compose run --rm data-pipeline
 	docker compose run --rm model-pipeline
 	docker compose run --rm inference-pipeline
@@ -538,22 +557,22 @@ docker-nuclear:
 
 docker-airflow-up:
 	@echo "🐳 Starting Airflow services in Docker..."
-	@docker network create fraud-detection-network 2>/dev/null || true
+	@python -c "import subprocess; subprocess.run(['docker', 'network', 'create', 'fraud-detection-network'], stderr=subprocess.DEVNULL)"
 	docker compose -f docker-compose.airflow.yml up -d
 
 docker-airflow-down:
 	@echo "🐳 Stopping Airflow services in Docker..."
 	docker compose -f docker-compose.airflow.yml down
-	@docker rm -f airflow-redis airflow-postgres airflow-webserver airflow-scheduler airflow-worker airflow-init airflow-flower 2>/dev/null || true
+	@python -c "import subprocess; subprocess.run(['docker', 'rm', '-f', 'airflow-redis', 'airflow-postgres', 'airflow-webserver', 'airflow-scheduler', 'airflow-worker', 'airflow-init', 'airflow-flower'], stderr=subprocess.DEVNULL)"
 
 docker-airflow-init:
 	@echo "🐳 Initializing Airflow database and admin user in Docker..."
-	@docker network create fraud-detection-network 2>/dev/null || true
+	@python -c "import subprocess; subprocess.run(['docker', 'network', 'create', 'fraud-detection-network'], stderr=subprocess.DEVNULL)"
 	docker compose -f docker-compose.airflow.yml run --rm airflow-init
 
 docker-airflow-webserver:
 	@echo "🐳 Starting Airflow webserver container in Docker..."
-	@docker network create fraud-detection-network 2>/dev/null || true
+	@python -c "import subprocess; subprocess.run(['docker', 'network', 'create', 'fraud-detection-network'], stderr=subprocess.DEVNULL)"
 	docker compose -f docker-compose.airflow.yml up -d airflow-webserver
 
 docker-airflow-webserver-logs:

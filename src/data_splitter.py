@@ -6,7 +6,6 @@ from enum import Enum
 from abc import ABC, abstractmethod
 from typing import Tuple, List, Dict, Union, Any, Optional
 from sklearn.model_selection import train_test_split
-from imblearn.over_sampling import SMOTENC
 from pyspark.sql import DataFrame, SparkSession
 from utils.logger import get_logger
 

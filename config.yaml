@@ -235,9 +235,9 @@ kafka:
     fraud_predictions: "fraud_predictions"
   consumer_group: "fraud_detection_group"
 
-# AWS S3 Configuration - STUDENTS: Replace with your AWS settings
+# AWS S3 Configuration
 aws:
-  region: "ap-south-1"  # REQUIRED: Change this to your AWS region (e.g., us-east-1, eu-west-1)
-  s3_bucket: "credit-card-fraud-data-bucket"  # REQUIRED: Change this to your unique S3 bucket name
-  s3_kms_key_arn: ""  # OPTIONAL: Your KMS key ARN
-  force_s3_io: true  # Save and upload all artifacts to AWS S3
+  region: "us-east-1"
+  s3_bucket: "credit-card-fraud-data-bucket"
+  s3_kms_key_arn: ""
+  force_s3_io: true

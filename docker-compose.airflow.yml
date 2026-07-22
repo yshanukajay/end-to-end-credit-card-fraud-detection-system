@@ -61,7 +61,8 @@ services:
       AIRFLOW__CORE__LOAD_EXAMPLES: "False"
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
       AIRFLOW__API__AUTH_BACKENDS: "airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session"
-      _PIP_ADDITIONAL_REQUIREMENTS: "pyspark==3.5.0 mlflow boto3 pandas numpy scikit-learn xgboost matplotlib seaborn pyyaml"
+      AIRFLOW__LOGGING__REMOTE_LOGGING: "True"
+      AIRFLOW__LOGGING__REMOTE_BASE_LOG_FOLDER: "s3://${S3_BUCKET:-credit-card-fraud-data-bucket}/airflow-logs"
       PYTHONPATH: "/opt/app:/opt/app/src:/opt/app/utils:/opt/app/pipelines"
       PATH: "/home/airflow/.local/bin:/usr/local/bin:/usr/bin:/bin"
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
@@ -74,6 +75,7 @@ services:
       - ./dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
       - ./airflow/plugins:/opt/airflow/plugins
+      - ./logs:/opt/app/logs
       - ./src:/opt/app/src:ro
       - ./utils:/opt/app/utils:ro
       - ./pipelines:/opt/app/pipelines:ro
@@ -111,7 +113,8 @@ services:
       AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${RDS_USER:-airflow}:${RDS_PASSWORD:-airflow}@${RDS_HOST:-airflow-postgres}:${RDS_PORT:-5432}/${RDS_AIRFLOW_DB:-airflow}
       AIRFLOW__CORE__LOAD_EXAMPLES: "False"
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
-      _PIP_ADDITIONAL_REQUIREMENTS: "pyspark==3.5.0 mlflow boto3 pandas numpy scikit-learn xgboost matplotlib seaborn pyyaml"
+      AIRFLOW__LOGGING__REMOTE_LOGGING: "True"
+      AIRFLOW__LOGGING__REMOTE_BASE_LOG_FOLDER: "s3://${S3_BUCKET:-credit-card-fraud-data-bucket}/airflow-logs"
       PYTHONPATH: "/opt/app:/opt/app/src:/opt/app/utils:/opt/app/pipelines"
       PATH: "/home/airflow/.local/bin:/usr/local/bin:/usr/bin:/bin"
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
@@ -124,6 +127,7 @@ services:
       - ./dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
       - ./airflow/plugins:/opt/airflow/plugins
+      - ./logs:/opt/app/logs
       - ./src:/opt/app/src:ro
       - ./utils:/opt/app/utils:ro
       - ./pipelines:/opt/app/pipelines:ro
@@ -159,7 +163,8 @@ services:
       AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${RDS_USER:-airflow}:${RDS_PASSWORD:-airflow}@${RDS_HOST:-airflow-postgres}:${RDS_PORT:-5432}/${RDS_AIRFLOW_DB:-airflow}
       AIRFLOW__CORE__LOAD_EXAMPLES: "False"
       AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "true"
-      _PIP_ADDITIONAL_REQUIREMENTS: "pyspark==3.5.0 mlflow boto3 pandas numpy scikit-learn xgboost matplotlib seaborn pyyaml"
+      AIRFLOW__LOGGING__REMOTE_LOGGING: "True"
+      AIRFLOW__LOGGING__REMOTE_BASE_LOG_FOLDER: "s3://${S3_BUCKET:-credit-card-fraud-data-bucket}/airflow-logs"
       PYTHONPATH: "/opt/app:/opt/app/src:/opt/app/utils:/opt/app/pipelines"
       PATH: "/home/airflow/.local/bin:/usr/local/bin:/usr/bin:/bin"
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
@@ -173,6 +178,7 @@ services:
       - ./dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
       - ./airflow/plugins:/opt/airflow/plugins
+      - ./logs:/opt/app/logs
       - ./src:/opt/app/src:ro
       - ./utils:/opt/app/utils:ro
       - ./pipelines:/opt/app/pipelines:ro
@@ -207,7 +213,8 @@ services:
       AIRFLOW__CELERY__BROKER_URL: redis://airflow-redis:6379/0
       AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${RDS_USER:-airflow}:${RDS_PASSWORD:-airflow}@${RDS_HOST:-airflow-postgres}:${RDS_PORT:-5432}/${RDS_AIRFLOW_DB:-airflow}
       AIRFLOW__CORE__LOAD_EXAMPLES: "False"
-      _PIP_ADDITIONAL_REQUIREMENTS: "pyspark==3.5.0 mlflow boto3 pandas numpy scikit-learn xgboost matplotlib seaborn pyyaml"
+      AIRFLOW__LOGGING__REMOTE_LOGGING: "True"
+      AIRFLOW__LOGGING__REMOTE_BASE_LOG_FOLDER: "s3://${S3_BUCKET:-credit-card-fraud-data-bucket}/airflow-logs"
       PYTHONPATH: "/opt/app:/opt/app/src:/opt/app/utils:/opt/app/pipelines"
       PATH: "/home/airflow/.local/bin:/usr/local/bin:/usr/bin:/bin"
       AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
@@ -219,6 +226,7 @@ services:
       - ./dags:/opt/airflow/dags
       - ./airflow/logs:/opt/airflow/logs
       - ./airflow/plugins:/opt/airflow/plugins
+      - ./logs:/opt/app/logs
       - ./src:/opt/app/src:ro
       - ./utils:/opt/app/utils:ro
       - ./pipelines:/opt/app/pipelines:ro
@@ -246,7 +254,10 @@ services:
   # AIRFLOW FLOWER DASHBOARD (PORT 5555)
   # ================================
   airflow-flower:
-    image: apache/airflow:2.8.1-python3.11
+    build:
+      context: .
+      dockerfile: docker/airflow/Dockerfile.airflow
+    image: fraud-detection-pipeline/airflow:2.8.1
     container_name: airflow-flower
     user: "${AIRFLOW_UID:-50000}:0"
     depends_on:
@@ -259,7 +270,6 @@ services:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${RDS_USER:-airflow}:${RDS_PASSWORD:-airflow}@${RDS_HOST:-airflow-postgres}:${RDS_PORT:-5432}/${RDS_AIRFLOW_DB:-airflow}
       AIRFLOW__CELERY__BROKER_URL: redis://airflow-redis:6379/0
       AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${RDS_USER:-airflow}:${RDS_PASSWORD:-airflow}@${RDS_HOST:-airflow-postgres}:${RDS_PORT:-5432}/${RDS_AIRFLOW_DB:-airflow}
-      _PIP_ADDITIONAL_REQUIREMENTS: "flower"
       PYTHONPATH: "/opt/app:/opt/app/src:/opt/app/utils:/opt/app/pipelines"
       PATH: "/home/airflow/.local/bin:/usr/local/bin:/usr/bin:/bin"
     volumes:
